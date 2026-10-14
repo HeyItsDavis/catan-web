@@ -35,12 +35,22 @@ export function GameScreen({ def, state, playerId, send, chat, sendChat }: GameS
   const pick = useMemo<BoardPick | null>(() => {
     if (!myPrompt || (myPrompt.kind !== 'location' && myPrompt.kind !== 'piece')) return null;
     const opts = new Set(myPrompt.options);
+    if (myPrompt.kind === 'location') {
+      return { locations: opts, pieces: new Set(), onPick: (id) => send({ type: 'respond', promptId: myPrompt.id, answer: id }) };
+    }
+    // Piece prompts: the engine offers the LOCATIONS of the candidate pieces (piece instance ids are
+    // accepted too). Highlight the pieces standing there and answer with whatever the option was.
+    const answerFor = new Map<string, string>();
+    for (const pc of state.pieces) {
+      if (opts.has(pc.id)) answerFor.set(pc.id, pc.id);
+      else if (opts.has(pc.at) && !answerFor.has(pc.id)) answerFor.set(pc.id, pc.at);
+    }
     return {
-      locations: myPrompt.kind === 'location' ? opts : new Set(),
-      pieces: myPrompt.kind === 'piece' ? opts : new Set(),
-      onPick: (id) => send({ type: 'respond', promptId: myPrompt.id, answer: id }),
+      locations: new Set(),
+      pieces: new Set(answerFor.keys()),
+      onPick: (pieceId) => send({ type: 'respond', promptId: myPrompt.id, answer: answerFor.get(pieceId) ?? pieceId }),
     };
-  }, [myPrompt, send]);
+  }, [myPrompt, send, state.pieces]);
 
   return (
     <div className="g-root">

@@ -5,7 +5,7 @@ import type {
 import { EVENTS } from '../../editor/catalog';
 import { describeExpr, summarizeEffects } from '../../editor/describe';
 import { formatPath, slugify, uniqueId, type Path } from '../../editor/paths';
-import { atScope, eventScope } from '../../editor/vars';
+import { actionScope, atScope, cardScope, eventScope, setupScope } from '../../editor/vars';
 import { ConditionField, EffectsField, EventPicker, ExprEditor, ResourceMapEditor } from './blocks';
 import { useEditor } from './context';
 import {
@@ -161,7 +161,7 @@ export function PieceForm(props: FormProps<PieceDef>) {
         <Field label="During setup" path={[...path, 'placement', 'setupWhere']} wide help="Looser rule for setup rounds. Default: same rule minus the connection requirement.">
           {v.placement?.setupWhere !== undefined ? (
             <div>
-              <ConditionField value={v.placement.setupWhere} onChange={sw => set('placement', { ...v.placement, setupWhere: sw })} path={[...path, 'placement', 'setupWhere']} scope={atScope()} />
+              <ConditionField value={v.placement.setupWhere} onChange={sw => set('placement', { ...v.placement, setupWhere: sw })} path={[...path, 'placement', 'setupWhere']} scope={setupScope()} />
               <button type="button" className="me-btn me-btn-small" onClick={() => { const pl = { ...v.placement }; delete pl.setupWhere; set('placement', pl); }}>Use default</button>
             </div>
           ) : <button type="button" className="me-chip me-chip-add" onClick={() => set('placement', { ...v.placement, setupWhere: true })}>＋ Custom setup rule</button>}
@@ -258,13 +258,13 @@ export function CardForm(props: FormProps<CardDef>) {
       <Field label="Extra play condition" path={[...path, 'play', 'cond']} wide>
         {play.cond !== undefined ? (
           <div>
-            <ConditionField value={play.cond} onChange={cond => setPlay({ ...play, cond })} path={[...path, 'play', 'cond']} scope={[]} />
+            <ConditionField value={play.cond} onChange={cond => setPlay({ ...play, cond })} path={[...path, 'play', 'cond']} scope={cardScope()} />
             <button type="button" className="me-btn me-btn-small" onClick={() => { const p = { ...play }; delete p.cond; setPlay(p); }}>Remove condition</button>
           </div>
         ) : <button type="button" className="me-chip me-chip-add" onClick={() => setPlay({ ...play, cond: true })}>＋ Only playable if…</button>}
       </Field>
       <Section title="When played" path={[...path, 'effect']}>
-        <EffectsField value={v.effect} onChange={effect => onChange({ ...v, effect })} path={[...path, 'effect']} scope={[]} emptyHint="Add what happens when the card is played." />
+        <EffectsField value={v.effect} onChange={effect => onChange({ ...v, effect })} path={[...path, 'effect']} scope={cardScope()} emptyHint="Add what happens when the card is played." />
       </Section>
       <CardDecks {...props} />
     </>
@@ -358,10 +358,10 @@ export function ActionForm(props: FormProps<ActionDef>) {
         <ResourceMapEditor value={v.cost} onChange={cost => onChange({ ...v, cost: Object.keys(cost).length ? cost : undefined })} path={[...path, 'cost']} scope={[]} />
       </Section>
       <Section title="Available when" path={[...path, 'available']}>
-        <ConditionField value={v.available} onChange={available => onChange({ ...v, available })} path={[...path, 'available']} scope={[]} />
+        <ConditionField value={v.available} onChange={available => onChange({ ...v, available })} path={[...path, 'available']} scope={actionScope()} />
       </Section>
       <Section title="What it does" path={[...path, 'effect']}>
-        <EffectsField value={v.effect} onChange={effect => onChange({ ...v, effect })} path={[...path, 'effect']} scope={[]} />
+        <EffectsField value={v.effect} onChange={effect => onChange({ ...v, effect })} path={[...path, 'effect']} scope={actionScope()} />
       </Section>
     </>
   );

@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Condition, Effect, Expr, LocationChoice, PieceQuery, PlayerRef, ResourceMap, TurnPhase } from '../../engine/schema';
 import {
-  COMPARE_OPS, CONDITIONS, CONDITION_CATEGORIES, EFFECTS, EFFECT_CATEGORIES, EVENTS, EXPRS, EXPR_CATEGORIES, LOCATION_KINDS,
+  COMPARE_OPS, LOBBY_SETTINGS, CONDITIONS, CONDITION_CATEGORIES, EFFECTS, EFFECT_CATEGORIES, EVENTS, EXPRS, EXPR_CATEGORIES, LOCATION_KINDS,
   TURN_PHASES, blockList, conditionSpec, defaultForParam, effectSpec, exprSpec, paramPathSegments, readParams, writeParams,
   type BlockSpec, type Category, type ConditionKind, type ExprKind, type ParamSpec, type VarType,
 } from '../../editor/catalog';
@@ -297,7 +297,7 @@ export function ParamEditor(props: { p: ParamSpec; value: unknown; onChange(v: u
     case 'deckId': return <RefSelect collection="decks" value={value as string} onChange={onChange} />;
     case 'tokenId': return <RefSelect collection="tokens" value={value as string} onChange={onChange} />;
     case 'terrainId': return <RefSelect collection="terrains" value={value as string} onChange={onChange} />;
-    case 'settingId': return <RefSelect collection="settings" value={value as string} onChange={onChange} />;
+    case 'settingId': return <RefSelect collection="settings" value={value as string} onChange={onChange} extra={LOBBY_SETTINGS.map(s => ({ value: s.id, label: s.label, group: 'Lobby settings' }))} />;
     case 'pieceIds': case 'terrainIds': {
       const coll = p.kind === 'pieceIds' ? 'pieces' : 'terrains';
       const arr = value === undefined || value === '' ? [] : Array.isArray(value) ? value as string[] : [value as string];

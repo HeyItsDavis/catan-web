@@ -10,6 +10,7 @@
 import type {
   BuiltinEvent, Condition, Effect, EffectOp, Expr, LocationKind, TurnPhase,
 } from '../engine/schema';
+import { EVENT_PAYLOAD_VARS } from '../engine/schema';
 
 /* ------------------------------------------------------------------------ */
 /*  Types                                                                    */
@@ -175,7 +176,7 @@ export const EFFECTS: EffectCatalog = {
     description: 'Run the steps once for every piece on the board that matches a query.',
     params: [
       { name: 'query', label: 'Pieces', kind: 'pieceQuery', default: { owner: 'self' } },
-      P.as('piece', 'piece', false, true),
+      P.as('location', 'piece', false, true),
       { name: 'do', label: 'Steps', kind: 'effects' },
     ],
     make: () => ({ op: 'forEachPiece', query: { owner: 'self' }, as: 'piece', do: [] }),
@@ -267,7 +268,7 @@ export const EFFECTS: EffectCatalog = {
     description: 'Ask a player to pick a piece on the board and remember it.',
     params: [
       P.player('Who chooses'),
-      P.as('piece', 'piece'),
+      P.as('location', 'piece'),
       { name: 'query', label: 'From pieces', kind: 'pieceQuery', default: { owner: 'self' } },
       { name: 'filter', label: 'Only where', kind: 'condition', optional: true },
       P.label(),
@@ -859,55 +860,94 @@ export const EXPRS: ExprCatalog = {
 export interface EventVar { name: string; type: VarType; description: string }
 export interface EventSpec { label: string; description: string; vars: EventVar[] }
 
-const playerVar: EventVar = { name: 'player', type: 'player', description: 'The player concerned' };
-const pieceVars: EventVar[] = [
-  { name: 'piece', type: 'piece', description: 'The piece type id' },
-  { name: 'at', type: 'location', description: 'Where it happened' },
-  { name: 'owner', type: 'player', description: 'The piece’s owner' },
-];
+/** Type + description of each payload var name (see EVENT_PAYLOAD_VARS in engine/schema.ts). */
+const PAYLOAD_VAR_INFO: Record<string, Omit<EventVar, 'name'>> = {
+  player: { type: 'player', description: 'The player concerned' },
+  owner: { type: 'player', description: 'The piece’s owner' },
+  previous: { type: 'player', description: 'Previous holder (may be empty)' },
+  with: { type: 'player', description: 'Trade partner (a player, or "bank")' },
+  total: { type: 'number', description: 'Sum of the dice' },
+  die0: { type: 'number', description: 'First die' },
+  die1: { type: 'number', description: 'Second die' },
+  event0: { type: 'any', description: 'Face of the first event die' },
+  roll: { type: 'number', description: 'The number produced (empty when a single hex produced)' },
+  amount: { type: 'number', description: 'How many' },
+  hex: { type: 'location', description: 'The hex that produced' },
+  at: { type: 'location', description: 'Where it happened' },
+  piece: { type: 'any', description: 'The piece TYPE id (e.g. "settlement")' },
+  from: { type: 'location', description: 'Previous location' },
+  token: { type: 'any', description: 'Token id' },
+  terrain: { type: 'any', description: 'Terrain id' },
+  card: { type: 'any', description: 'Card id' },
+  deck: { type: 'any', description: 'Deck id' },
+  resource: { type: 'resource', description: 'Resource id' },
+  award: { type: 'any', description: 'Award id' },
+};
+
+/** Per-event overrides where a var name means something else. */
+const PAYLOAD_VAR_OVERRIDES: Partial<Record<BuiltinEvent, Record<string, Omit<EventVar, 'name'>>>> = {
+  pieceUpgraded: { from: { type: 'any', description: 'The old piece TYPE id' } },
+  tokenMoved: { at: { type: 'location', description: 'New location' }, from: { type: 'location', description: 'Previous location (may be empty)' } },
+  hexRevealed: { at: { type: 'location', description: 'The hex' } },
+};
+
+const EVENT_TEXT: Record<BuiltinEvent, { label: string; description: string }> = {
+  gameStart: { label: 'Game starts', description: 'Once, before setup begins.' },
+  setupComplete: { label: 'Setup finished', description: 'After the last setup placement.' },
+  turnStart: { label: 'Turn starts', description: 'At the start of each turn.' },
+  turnEnd: { label: 'Turn ends', description: 'At the end of each turn.' },
+  roundEnd: { label: 'Round ends', description: 'After every player has had a turn.' },
+  diceRolled: { label: 'Dice rolled', description: 'Right after the dice are rolled. Each event die also fires an event named after the face rolled.' },
+  production: { label: 'Production', description: 'When resources are produced.' },
+  piecePlaced: { label: 'Piece placed', description: 'Whenever a piece is put on the board.' },
+  pieceUpgraded: { label: 'Piece upgraded', description: 'Whenever a piece is upgraded.' },
+  pieceRemoved: { label: 'Piece removed', description: 'Whenever a piece leaves the board.' },
+  pieceMoved: { label: 'Piece moved', description: 'Whenever a piece moves.' },
+  tokenMoved: { label: 'Token moved', description: 'Whenever a token (robber…) moves.' },
+  hexRevealed: { label: 'Hex revealed', description: 'When a fog hex is flipped.' },
+  cardDrawn: { label: 'Card drawn', description: 'When a card is drawn from a deck.' },
+  cardPlayed: { label: 'Card played', description: 'When a card is played.' },
+  resourceGained: { label: 'Resource gained', description: 'Whenever a player gains resources.' },
+  resourceLost: { label: 'Resource lost', description: 'Whenever a player loses resources.' },
+  tradeCompleted: { label: 'Trade completed', description: 'After any trade.' },
+  awardChanged: { label: 'Award changed hands', description: 'When an award (Longest Road…) moves.' },
+};
+
+/** Every trigger also gets `event` (the event name). */
+const EVENT_NAME_VAR: EventVar = { name: 'event', type: 'any', description: 'The event name' };
+
+/** Type/description of payload var `name` of `event` (custom events: emit payload keys are numbers). */
+export function payloadVar(event: string, name: string): EventVar {
+  const info = PAYLOAD_VAR_OVERRIDES[event as BuiltinEvent]?.[name] ?? PAYLOAD_VAR_INFO[name] ?? { type: 'any' as VarType, description: name };
+  return { name, ...info };
+}
 
 /**
- * Builtin trigger events and the payload vars bound for them. The schema only
- * documents some payloads (diceRolled, piecePlaced, cardPlayed, resourceGained,
- * turnStart/turnEnd); the rest are the editor’s best guess, flagged `guess`.
+ * Builtin trigger events and their payload vars, derived from the engine's EVENT_PAYLOAD_VARS
+ * so the editor's var pickers always match what the engine binds.
  */
-export const EVENTS: Record<BuiltinEvent, EventSpec> = {
-  gameStart: { label: 'Game starts', description: 'Once, before setup begins.', vars: [] },
-  setupComplete: { label: 'Setup finished', description: 'After the last setup placement.', vars: [] },
-  turnStart: { label: 'Turn starts', description: 'At the start of each turn.', vars: [playerVar] },
-  turnEnd: { label: 'Turn ends', description: 'At the end of each turn.', vars: [playerVar] },
-  roundEnd: { label: 'Round ends', description: 'After every player has had a turn.', vars: [] },
-  diceRolled: {
-    label: 'Dice rolled', description: 'Right after the dice are rolled.',
-    vars: [
-      { name: 'total', type: 'number', description: 'Sum of the dice' },
-      { name: 'die0', type: 'number', description: 'First die' },
-      { name: 'die1', type: 'number', description: 'Second die' },
-    ],
-  },
-  production: { label: 'Production', description: 'When resources are produced for a roll.', vars: [{ name: 'total', type: 'number', description: 'The number produced' }] },
-  piecePlaced: { label: 'Piece placed', description: 'Whenever a piece is put on the board.', vars: pieceVars },
-  pieceUpgraded: { label: 'Piece upgraded', description: 'Whenever a piece is upgraded.', vars: pieceVars },
-  pieceRemoved: { label: 'Piece removed', description: 'Whenever a piece leaves the board.', vars: pieceVars },
-  pieceMoved: { label: 'Piece moved', description: 'Whenever a piece moves.', vars: pieceVars },
-  tokenMoved: {
-    label: 'Token moved', description: 'Whenever a token (robber…) moves.',
-    vars: [{ name: 'token', type: 'any', description: 'Token id' }, { name: 'at', type: 'location', description: 'New location' }],
-  },
-  hexRevealed: { label: 'Hex revealed', description: 'When a fog hex is flipped.', vars: [{ name: 'at', type: 'location', description: 'The hex' }] },
-  cardDrawn: { label: 'Card drawn', description: 'When a card is drawn from a deck.', vars: [{ name: 'card', type: 'any', description: 'Card id' }, playerVar] },
-  cardPlayed: { label: 'Card played', description: 'When a card is played.', vars: [{ name: 'card', type: 'any', description: 'Card id' }, playerVar] },
-  resourceGained: {
-    label: 'Resource gained', description: 'Whenever a player gains resources.',
-    vars: [{ name: 'resource', type: 'resource', description: 'Resource id' }, { name: 'amount', type: 'number', description: 'How many' }, playerVar],
-  },
-  resourceLost: {
-    label: 'Resource lost', description: 'Whenever a player loses resources.',
-    vars: [{ name: 'resource', type: 'resource', description: 'Resource id' }, { name: 'amount', type: 'number', description: 'How many' }, playerVar],
-  },
-  tradeCompleted: { label: 'Trade completed', description: 'After any trade.', vars: [playerVar] },
-  awardChanged: { label: 'Award changed hands', description: 'When an award (Longest Road…) moves.', vars: [{ name: 'award', type: 'any', description: 'Award id' }, playerVar] },
-};
+export const EVENTS: Record<BuiltinEvent, EventSpec> = Object.fromEntries(
+  (Object.keys(EVENT_TEXT) as BuiltinEvent[]).map((ev) => [ev, {
+    ...EVENT_TEXT[ev],
+    vars: [...(EVENT_PAYLOAD_VARS[ev] ?? []).map((n) => payloadVar(ev, n)), EVENT_NAME_VAR],
+  }]),
+) as Record<BuiltinEvent, EventSpec>;
+
+/**
+ * Builtin lobby settings readable with {param} / {setting} besides mod SettingDefs
+ * (mirrors LOBBY_KEYS in engine/context.ts).
+ */
+export const LOBBY_SETTINGS: { id: string; label: string }[] = [
+  { id: 'victoryPoints', label: 'Points to win' },
+  { id: 'discardLimit', label: 'Discard limit' },
+  { id: 'maxPlayers', label: 'Max players' },
+  { id: 'turnTimerSeconds', label: 'Turn timer (seconds)' },
+  { id: 'friendlyRobber', label: 'Friendly robber' },
+  { id: 'hideBankCards', label: 'Hide bank cards' },
+  { id: 'randomizeTurnOrder', label: 'Randomize turn order' },
+  { id: 'diceMode', label: 'Dice mode' },
+  { id: 'mapId', label: 'Map' },
+];
 
 export const TURN_PHASES: TurnPhase[] = ['setup', 'preRoll', 'main', 'specialBuild', 'gameOver'];
 export const LOCATION_KINDS: LocationKind[] = ['hex', 'vertex', 'edge'];

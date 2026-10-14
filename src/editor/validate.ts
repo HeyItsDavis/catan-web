@@ -5,10 +5,10 @@
  * required fields. Paths use `formatPath` syntax and drive click-to-navigate.
  */
 import type { CollectionKey, Condition, Effect, GameDefinition, ModDef, PieceQuery } from '../engine/schema';
-import type { ParamKind, ParamSpec } from './catalog';
+import { LOBBY_SETTINGS, type ParamKind, type ParamSpec } from './catalog';
 import { COLLECTION_KEYS, engineApi, fullDefinition, parentDefinition } from './merge';
 import { formatPath, type Path } from './paths';
-import { atScope, eventScope, type VarInfo } from './vars';
+import { actionScope, atScope, cardScope, eventScope, mergeScope, setupScope, type VarInfo } from './vars';
 import { walkCondition, walkEffects, walkExpr, type WalkVisitor } from './walk';
 
 export interface Issue {
@@ -41,7 +41,8 @@ class Checker {
     const set = (k: RefCollection) => new Set(((def[k] ?? []) as { id: string }[]).map(x => x.id));
     this.ids = {
       resources: set('resources'), terrains: set('terrains'), pieces: set('pieces'), cards: set('cards'),
-      decks: set('decks'), tokens: set('tokens'), settings: set('settings'), actions: set('actions'),
+      decks: set('decks'), tokens: set('tokens'), actions: set('actions'),
+      settings: new Set([...set('settings'), ...LOBBY_SETTINGS.map(s => s.id)]),
     };
   }
 
@@ -221,7 +222,7 @@ export function checkMod(mod: ModDef, available: ModDef[]): Issue[] {
     if (!isObj(p.placement)) c.add([...base, 'placement'], 'Placement rule is required.');
     else {
       c.condition(p.placement.where, [...base, 'placement', 'where'], atScope());
-      c.condition(p.placement.setupWhere, [...base, 'placement', 'setupWhere'], atScope());
+      c.condition(p.placement.setupWhere, [...base, 'placement', 'setupWhere'], setupScope());
     }
     c.resourceMap(p.cost, [...base, 'cost']);
     if (p.upgradesFrom) c.refs('pieces', p.upgradesFrom, [...base, 'upgradesFrom'], false);
@@ -230,12 +231,12 @@ export function checkMod(mod: ModDef, available: ModDef[]): Issue[] {
       c.resourceMap(b.gives, [...base, 'productionBonus', j, 'gives']);
     });
     p.pieceActions?.forEach((a, j) => c.ref('actions', a, [...base, 'pieceActions', j]));
-    p.triggers?.forEach((t, j) => checkTrigger(c, t, [...base, 'triggers', j]));
+    p.triggers?.forEach((t, j) => checkTrigger(c, t, [...base, 'triggers', j], PIECE_TRIGGER_VARS));
   });
   mod.cards?.forEach((card, i) => {
     if (!isObj(card.play)) c.add(['cards', i, 'play'], 'Play timing is required.');
-    else c.condition(card.play.cond, ['cards', i, 'play', 'cond']);
-    c.effects(card.effect, ['cards', i, 'effect']);
+    else c.condition(card.play.cond, ['cards', i, 'play', 'cond'], cardScope());
+    c.effects(card.effect, ['cards', i, 'effect'], cardScope());
     const inDeck = def.decks.some(d => d.cards?.some(x => x.card === card.id));
     if (!inDeck && card.play?.timing !== 'never') c.add(['cards', i], `“${card.name || card.id}” isn’t in any deck yet, so nobody can draw it.`, 'warning');
   });
@@ -250,8 +251,8 @@ export function checkMod(mod: ModDef, available: ModDef[]): Issue[] {
   mod.actions?.forEach((a, i) => {
     c.resourceMap(a.cost, ['actions', i, 'cost']);
     if (a.available === undefined) c.add(['actions', i, 'available'], 'Say when the action is available.');
-    else c.condition(a.available, ['actions', i, 'available']);
-    c.effects(a.effect, ['actions', i, 'effect']);
+    else c.condition(a.available, ['actions', i, 'available'], actionScope());
+    c.effects(a.effect, ['actions', i, 'effect'], actionScope());
   });
   mod.tokens?.forEach((t, i) => {
     c.condition(t.where, ['tokens', i, 'where'], atScope());
@@ -288,9 +289,15 @@ export function checkMod(mod: ModDef, available: ModDef[]): Issue[] {
   return c.issues;
 }
 
-function checkTrigger(c: Checker, t: { on: string; when?: Condition; do: Effect[] }, path: Path) {
+/** Triggers attached to a piece type also see the piece: `this` (its location) and `thisId`. */
+const PIECE_TRIGGER_VARS: VarInfo[] = [
+  { name: 'this', type: 'location', source: 'The piece this trigger belongs to' },
+  { name: 'thisId', type: 'any', source: 'The piece instance id' },
+];
+
+function checkTrigger(c: Checker, t: { on: string; when?: Condition; do: Effect[] }, path: Path, extra: VarInfo[] = []) {
   if (!t.on) c.add([...path, 'on'], 'Pick an event.');
-  const scope = eventScope(t.on);
+  const scope = mergeScope(eventScope(t.on), extra);
   c.condition(t.when, [...path, 'when'], scope);
   c.effects(t.do, [...path, 'do'], scope);
 }

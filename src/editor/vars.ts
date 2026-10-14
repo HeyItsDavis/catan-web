@@ -47,7 +47,19 @@ export function scopeAt(list: Effect[], index: number, scope: VarInfo[]): VarInf
 
 const AT_LOCATION: VarInfo = { name: 'at', type: 'location', source: 'Candidate location' };
 
-/** Scope inside a param of an effect (its children see loop vars, filters see `at`). */
+/** What type the candidate of a choose-style filter has (the engine binds it under the op's own `as`). */
+const FILTER_CANDIDATE: Partial<Record<Effect['op'], VarInfo['type']>> = {
+  chooseLocation: 'location',
+  choosePiece: 'location',
+  choosePlayer: 'player',
+};
+
+/**
+ * Scope inside a param of an effect. Mirrors the engine's binding rules (engine/schema.ts):
+ *  - loop vars (forEachPlayer / forEachPiece / repeat `as`) are visible to the block's children;
+ *  - choose filters see the CANDIDATE under the op's own `as` name (`at` is not rebound);
+ *  - LocationChoice.where sees the candidate as `at`.
+ */
 export function innerScope(e: Effect, paramName: string, scope: VarInfo[]): VarInfo[] {
   const spec = EFFECTS[e.op];
   if (!spec) return scope;
@@ -58,20 +70,47 @@ export function innerScope(e: Effect, paramName: string, scope: VarInfo[]): VarI
       extra.push({ name: rec[p.name] as string, type: p.binds ?? 'any', source: `${spec.label} loop` });
     }
   }
-  if (e.op === 'chooseLocation' && paramName === 'filter') extra.push(AT_LOCATION);
-  if ((e.op === 'choosePiece' && paramName === 'filter')) extra.push({ name: 'at', type: 'location', source: 'Candidate piece location' });
+  const cand = FILTER_CANDIDATE[e.op];
+  if (cand && paramName === 'filter' && typeof rec.as === 'string' && rec.as) {
+    extra.push({ name: rec.as, type: cand, source: 'The candidate being tested' });
+  }
   const target = spec.params.find(p => p.name === paramName);
   if (target?.kind === 'locationChoice') extra.push(AT_LOCATION);
   return mergeScope(scope, extra);
 }
 
+/** Placement rules (`where`), token `where`/`onMove`: the candidate / token location is `at`. */
 export function atScope(): VarInfo[] {
   return [AT_LOCATION];
 }
 
+/** PlacementRule.setupWhere: `at` plus `lastPlaced` (the previous piece placed this setup turn). */
+export function setupScope(): VarInfo[] {
+  return [AT_LOCATION, { name: 'lastPlaced', type: 'location', source: 'Previous piece placed this setup turn' }];
+}
+
+/** ActionDef.available / cost / effect. `piece` & `pieceId` are only set for piece actions. */
+export function actionScope(): VarInfo[] {
+  return [
+    { name: 'piece', type: 'location', source: 'Piece actions: where the piece stands' },
+    { name: 'pieceId', type: 'any', source: 'Piece actions: the piece instance id' },
+  ];
+}
+
+/** CardDef.effect: `card` = the card id being played. */
+export function cardScope(): VarInfo[] {
+  return [{ name: 'card', type: 'any', source: 'The card being played' }];
+}
+
 export function eventScope(event: string): VarInfo[] {
   const spec = (EVENTS as Record<string, { label: string; vars: { name: string; type: VarType }[] }>)[event];
-  if (!spec) return [];
+  if (!spec) {
+    // Custom event (fired by `emit`): payload keys are unknown here, but `player` and `event` are always set.
+    return [
+      { name: 'player', type: 'player', source: 'Player who emitted the event' },
+      { name: 'event', type: 'any', source: 'The event name' },
+    ];
+  }
   return spec.vars.map(v => ({ name: v.name, type: v.type, source: `${spec.label} event` }));
 }
 

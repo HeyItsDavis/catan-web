@@ -5,7 +5,8 @@ import { dependencyChain, mergeMods } from './merge';
 import { formatPath, getIn, parsePath, setIn, slugify, uniqueId } from './paths';
 import { TEMPLATES, applyTemplate } from './templates';
 import { checkMod } from './validate';
-import { innerScope, scopeAt } from './vars';
+import { eventScope, innerScope, scopeAt, setupScope } from './vars';
+import { EVENT_PAYLOAD_VARS } from '../engine/schema';
 import { deleteMod, getMod, listModDefs as listMods, saveMod } from '../ui/shared/modLibrary';
 
 const base: ModDef = {
@@ -92,7 +93,21 @@ describe('vars', () => {
     const l = list as unknown as import('../engine/schema').Effect[];
     expect(scopeAt(l, 2, []).map(v => v.name)).toEqual(['victim']);
     expect(innerScope(l[1], 'do', []).map(v => v.name)).toEqual(['i']);
-    expect(innerScope({ op: 'chooseLocation', as: 'loc', kind: 'hex', filter: true }, 'filter', []).map(v => v.name)).toContain('at');
+    // Choose filters see the candidate under the op's own `as` name (engine/schema.ts binding rules).
+    expect(innerScope({ op: 'chooseLocation', as: 'loc', kind: 'hex', filter: true }, 'filter', []).map(v => v.name)).toEqual(['loc']);
+    expect(innerScope({ op: 'choosePlayer', as: 'victim' }, 'filter', [])).toEqual([expect.objectContaining({ name: 'victim', type: 'player' })]);
+    expect(innerScope({ op: 'choosePiece', as: 'k', query: {} }, 'filter', [])).toEqual([expect.objectContaining({ name: 'k', type: 'location' })]);
+    // LocationChoice.where sees `at`.
+    expect(innerScope({ op: 'place', piece: 'road' }, 'location', []).map(v => v.name)).toEqual(['at']);
+  });
+
+  it('event payload vars follow the engine', () => {
+    for (const [ev, names] of Object.entries(EVENT_PAYLOAD_VARS)) {
+      expect(eventScope(ev).map(v => v.name)).toEqual([...names, 'event']);
+    }
+    expect(eventScope('piecePlaced').find(v => v.name === 'at')?.type).toBe('location');
+    expect(eventScope('myCustomEvent').map(v => v.name)).toEqual(['player', 'event']);
+    expect(setupScope().map(v => v.name)).toEqual(['at', 'lastPlaced']);
   });
 });
 
@@ -173,5 +188,27 @@ describe('modLibrary', () => {
     deleteMod('m');
     expect(listMods().map(m => m.meta.id)).toEqual(['other']);
     expect(localStorage.getItem('catanweb:mods')).toContain('other');
+  });
+});
+
+describe('editor ↔ engine sync', () => {
+  it('the real base mod passes the editor checks and the engine validator', async () => {
+    const { baseMod } = await import('../content/base');
+    const { validateAll } = await import('./validate');
+    const errors = checkMod(baseMod, []).filter(i => i.severity === 'error' && i.path !== 'meta.id'); // 'base' id is reserved for mods
+    expect(errors).toEqual([]);
+    const mod: ModDef = { meta: { id: 'm', name: 'M', version: '1', extends: ['base'] } };
+    const res = validateAll(mod, [baseMod]);
+    expect(res.engineStatus).toBe('ok');
+    expect(res.issues.filter(i => i.severity === 'error')).toEqual([]);
+  });
+
+  it('reference ids resolve from the real base mod', async () => {
+    const { baseMod } = await import('../content/base');
+    const { fullDefinition } = await import('./merge');
+    const def = fullDefinition({ meta: { id: 'm', name: 'M', version: '1', extends: ['base'] } }, [baseMod]);
+    expect(def.resources.map(r => r.id)).toEqual(['brick', 'lumber', 'wool', 'grain', 'ore']);
+    expect(def.pieces.map(p => p.id)).toEqual(expect.arrayContaining(['road', 'settlement', 'city']));
+    expect(def.decks.map(d => d.id)).toContain('dev');
   });
 });

@@ -38,7 +38,8 @@ export function PromptPanel({ def, state, playerId, prompt, send }: Props) {
         {prompt.options.length === 0 && <span className="g-muted">(no legal options)</span>}
         {prompt.kind === 'piece' &&
           prompt.options.map((pid) => {
-            const inst = state.pieces.find((p) => p.id === pid);
+            // Options are piece locations (engine) or piece instance ids.
+            const inst = state.pieces.find((p) => p.id === pid) ?? state.pieces.find((p) => p.at === pid);
             const owner = state.players.find((p) => p.id === inst?.owner);
             return (
               <button key={pid} type="button" className="g-btn g-btn--sm" onClick={() => respond(pid)} title={owner?.name}>
