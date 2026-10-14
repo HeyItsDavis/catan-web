@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { applyCommand, buildDefinition, getAvailableMoves, redactFor, type Command, type GameDefinition, type GameState } from '../../engine';
 import { botMove, cur, mulberry, newGame, type Rand } from '../../engine/__tests__/helpers';
 import { baseMod } from '../../content/base';
-import { builtinMods } from '../../content/builtins';
+import { addWithDependencies, builtinMods } from '../../content/builtins';
 import { GameScreen } from './GameScreen';
 
 /** Base bot + a taste of the expansion: enabled custom / piece actions and every buildable piece. */
@@ -39,7 +39,7 @@ function renderAll(def: GameDefinition, s: GameState): string {
 
 describe.each(builtinMods.map((m) => [m.meta.id, m] as const))('game screen renders %s', (_id, mod) => {
   it('through a bot game, for every viewer', { timeout: 60_000 }, () => {
-    const def = buildDefinition([baseMod, mod]);
+    const def = buildDefinition([baseMod, ...addWithDependencies([], mod)]);
     const rnd = mulberry(17);
     let s = newGame(3, 3, def);
     let renders = 0;
