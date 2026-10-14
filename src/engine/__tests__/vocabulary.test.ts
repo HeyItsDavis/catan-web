@@ -356,6 +356,56 @@ describe('events, awards and networks', () => {
   });
 });
 
+describe('forEachLocation and edge producers', () => {
+  it('forEachLocation visits filtered locations (reveal fog next to a piece)', () => {
+    const { def, s: s0 } = game({ t: [
+      { op: 'choosePiece', as: 'w', query: { piece: 'wagon', owner: 'self' } },
+      { op: 'forEachLocation', kind: 'hex', as: 'h', filter: { isAdjacent: ['h', 'w'] }, do: [{ op: 'revealHex', at: 'h' }, { op: 'addStat', key: 'n', amount: 1 }] },
+    ] });
+    let s = place(def, s0, 'wagon', 'p1', C[0]);
+    s = edit(s, (c) => { for (const h of Object.values(c.hexes)) h.revealed = false; });
+    s = respond(def, run(def, s), C[0]);
+    expect(P(s, 'p1').stats.n).toBe(3);
+    expect(Object.values(s.hexes).filter((h) => h.revealed).map((h) => h.id).sort())
+      .toEqual(topology.vertexHexes(C[0]).map(topology.hexId).sort());
+  });
+
+  it('an edge piece with productionMultiplier produces from its 2 hexes', () => {
+    const mill: PieceDef = { id: 'mill', name: 'Mill', supply: 2, productionMultiplier: 1, placement: { on: 'edge', where: true } };
+    const { def, s: s0 } = game({ t: [{ op: 'produce', roll: 5 }] }, { pieces: [mill] });
+    let s = edit(s0, (c) => {
+      for (const h of Object.values(c.hexes)) if (h.number === 5) h.number = null;
+      c.hexes['h:0,0'].terrain = 'forest'; c.hexes['h:0,0'].number = 5;
+      c.hexes['h:1,0'].terrain = 'hills'; c.hexes['h:1,0'].number = 5;
+    });
+    const shared = topology.hexEdges({ q: 0, r: 0 })[1]; // E side: between (0,0) and (1,0)
+    s = place(def, s, 'mill', 'p1', shared);
+    expect(P(run(def, s), 'p1').resources).toMatchObject({ lumber: 1, brick: 1 });
+  });
+});
+
+describe('countPlayers and varIs', () => {
+  it('counts players passing a filter; compares a var with an id', () => {
+    const { def, s: s0 } = game({ t: [
+      { op: 'setStat', key: 'rich', value: { countPlayers: { as: 'q', filter: { cmp: [{ resourceCount: { player: { var: 'q' } } }, '>=', 2] } } } },
+      { op: 'setStat', key: 'all', value: { countPlayers: { as: 'q' } } },
+    ] }, {
+      triggers: [{ id: 'onlyCity', on: 'piecePlaced', as: 'eventPlayer', when: { varIs: { var: 'piece', value: 'city' } }, do: [{ op: 'addStat', key: 'cities', amount: 1 }] }],
+    });
+    let s = give(s0, 'p2', { ore: 2 });
+    s = give(s, 'p3', { ore: 3 });
+    expect(P(run(def, s), 'p1').stats).toMatchObject({ rich: 2, all: 3 });
+    const d2 = withMods(mod({ t: [{ op: 'place', piece: 'settlement', free: true, ignoreConnection: true }, { op: 'place', piece: 'city', free: true }] }, {
+      triggers: [{ id: 'onlyCity', on: 'piecePlaced', as: 'eventPlayer', when: { varIs: { var: 'piece', value: 'city' } }, do: [{ op: 'addStat', key: 'cities', amount: 1 }] }],
+    }));
+    let s2 = run(d2, s0);
+    s2 = answer(d2, s2);
+    expect(P(s2, 'p1').stats.cities).toBeUndefined();
+    s2 = answer(d2, s2);
+    expect(P(s2, 'p1').stats.cities).toBe(1);
+  });
+});
+
 describe('validation knows the new vocabulary', () => {
   it('a mod using every new block validates without errors', () => {
     const m = mod({

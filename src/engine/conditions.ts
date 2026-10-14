@@ -13,6 +13,9 @@
  *    with a `network`); vertex – an own network piece on an incident edge (or own piece on it).
  *  - distanceRule: `minDistance` = minimum number of edges between `at` and any "building"
  *    (see context.isBuilding); default 2 = the standard rule (no building on an adjacent vertex).
+ *  - hasToken.near: the token is on `at` or on a location adjacent to it.
+ *  - isNetworkEnd: see isNetworkEnd() below. sameRegion: see regions.ts.
+ *  Any location var may hold a piece instance id instead (= that piece's location).
  */
 import type { Condition } from './schema';
 import { type Ctx, type Env, currentPlayerId, findPlayer, isBuilding, piecesAt, settingValue } from './context';

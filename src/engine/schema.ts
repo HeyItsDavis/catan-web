@@ -219,6 +219,9 @@ export type Effect =
   | { op: 'if'; cond: Condition; then: Effect[]; else?: Effect[] }
   | { op: 'forEachPlayer'; filter?: Condition; as: string; do: Effect[]; order?: 'turn' | 'simultaneous' }
   | { op: 'forEachPiece'; query: PieceQuery; as: string; do: Effect[]; asId?: string }
+  /** Run `do` for every board location of `kind` passing `filter` (candidate bound as `as`), in board
+   *  order. E.g. reveal every hidden hex next to a ship: kind 'hex', filter isAdjacent [as, 'ship']. */
+  | { op: 'forEachLocation'; kind: LocationKind; as: string; do: Effect[]; filter?: Condition }
   | { op: 'chooseOption'; player?: PlayerRef; label?: string; options: { label: string; cond?: Condition; do: Effect[] }[] }
   | { op: 'setVar'; name: string; value: Expr }
   | { op: 'emit'; event: string; payload?: Record<string, Expr> } // fires custom triggers
@@ -421,7 +424,8 @@ export interface PieceDef {
   /** If set, building this replaces a piece of one of these types at the same location. */
   upgradesFrom?: Id[];
   vp?: number;
-  /** Resource multiplier for production on adjacent hexes (settlement 1, city 2). */
+  /** Resource multiplier for production on adjacent hexes (settlement 1, city 2). Works for corner
+   *  pieces (3 hexes), edge pieces (the 2 hexes beside the edge) and hex pieces (that hex). */
   productionMultiplier?: number;
   /** Extra production rules (e.g. C&K city on forest also gives paper). */
   productionBonus?: { terrain: Id; gives: ResourceMap }[];

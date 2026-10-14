@@ -353,6 +353,11 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       if (items.length) th.frames.push({ t: 'each', sc, fx: eff.do, items, i: 0, as: eff.as });
       return;
     }
+    case 'forEachLocation': {
+      const items = filterLocations(ctx, env, allLocations(ctx, eff.kind), [eff.filter], eff.as);
+      if (items.length) th.frames.push({ t: 'each', sc, fx: eff.do, items, i: 0, as: eff.as });
+      return;
+    }
     case 'chooseOption': {
       const who = P(eff.player);
       if (!who || who === 'bank') return;
@@ -1054,9 +1059,8 @@ function moveDestinations(ctx: Ctx, env: Env, eff: MovePieceEffect, pc: PieceIns
 
 /* ------------------------------ chooseMany ------------------------------ */
 
-type ChooseMany = Extract<Effect, { op: 'chooseMany' }>;
 
-function chooseManyOptions(ctx: Ctx, env: Env, eff: ChooseMany): string[] {
+function chooseManyOptions(ctx: Ctx, env: Env, eff: ChooseManyEffect): string[] {
   const vars = { ...env.vars };
   const e: Env = { self: env.self, vars };
   const keep = (x: string) => { vars[eff.as] = x; return evalCond(ctx, e, eff.filter); };
@@ -1068,7 +1072,7 @@ function chooseManyOptions(ctx: Ctx, env: Env, eff: ChooseMany): string[] {
   }
 }
 
-function finishChooseMany(th: Thread, sc: string, env: Env, eff: ChooseMany, picked: string[]): void {
+function finishChooseMany(th: Thread, sc: string, env: Env, eff: ChooseManyEffect, picked: string[]): void {
   if (eff.countAs) env.vars[eff.countAs] = picked.length;
   if (picked.length && eff.do.length) th.frames.push({ t: 'each', sc, fx: eff.do, items: picked, i: 0, as: eff.as });
 }

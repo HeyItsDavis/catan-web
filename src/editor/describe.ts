@@ -342,6 +342,11 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
       const simul = e.order === 'simultaneous' ? ' (all at once)' : '';
       return `for each player “${e.as}”${f}${simul}: ${steps(e.do, ctx)}`;
     }
+    case 'forEachLocation': {
+      const f = e.filter !== undefined && e.filter !== true ? ` where ${describeCondition(e.filter, ctx)}` : '';
+      const kind = e.kind === 'vertex' ? 'corner' : e.kind;
+      return `for each ${kind} “${e.as}”${f}: ${steps(e.do, ctx)}`;
+    }
     case 'forEachPiece': return `for each ${describePieceQuery(e.query, ctx)} (“${e.as}”): ${steps(e.do, ctx)}`;
     case 'chooseOption': {
       const opts = (e.options ?? []).map(o => `“${o.label}” → ${steps(o.do, ctx)}`);

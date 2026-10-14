@@ -15,7 +15,7 @@ import { mergeMods, sortMods, COLLECTIONS, ModValidationError } from './merge';
 export interface Problem { path: string; message: string; severity: 'error' | 'warning' }
 
 const EFFECT_OPS = new Set([
-  'sequence', 'repeat', 'if', 'forEachPlayer', 'forEachPiece', 'chooseOption', 'setVar', 'emit', 'log', 'abortIf',
+  'sequence', 'repeat', 'if', 'forEachPlayer', 'forEachPiece', 'forEachLocation', 'chooseOption', 'setVar', 'emit', 'log', 'abortIf',
   'choosePlayer', 'chooseResource', 'chooseLocation', 'choosePiece', 'chooseMany',
   'gain', 'pay', 'transfer', 'steal', 'discard', 'chooseAndGain', 'produce',
   'place', 'upgrade', 'downgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'setTerrain', 'setHexNumber', 'revealHex',
@@ -253,6 +253,11 @@ class Validator {
         if (e.order !== undefined && e.order !== 'turn' && e.order !== 'simultaneous') this.err(`${path}.order`, 'order must be "turn" or "simultaneous"');
         break;
       case 'forEachPiece': this.query(`${path}.query`, e.query, sc); bindVar(e.as); bindVar(e.asId); this.effects(`${path}.do`, e.do, sc); break;
+      case 'forEachLocation':
+        if (!e.as) this.err(`${path}.as`, 'forEachLocation needs "as"');
+        if (!KINDS.includes(e.kind)) this.err(`${path}.kind`, `kind must be one of ${KINDS.join(', ')}`);
+        this.cond(`${path}.filter`, e.filter, withVar(e.as)); bindVar(e.as); this.effects(`${path}.do`, e.do, sc);
+        break;
       case 'chooseMany': {
         if (!['player', 'location', 'piece', 'resource'].includes(e.of)) this.err(`${path}.of`, 'of must be player, location, piece or resource');
         if (!e.as) this.err(`${path}.as`, 'chooseMany needs "as"');

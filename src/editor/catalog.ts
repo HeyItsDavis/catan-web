@@ -186,6 +186,17 @@ export const EFFECTS: EffectCatalog = {
     ],
     make: () => ({ op: 'forEachPiece', query: { owner: 'self' }, as: 'piece', do: [] }),
   },
+  forEachLocation: {
+    key: 'forEachLocation', label: 'For each location', category: 'Control flow', shape: 'flat',
+    description: 'Run the steps once for every hex, corner or edge that passes a check (e.g. every hidden hex next to a ship).',
+    params: [
+      { name: 'kind', label: 'Location type', kind: 'locationKind', default: 'hex' },
+      P.as('location', 'loc', false, true),
+      { name: 'filter', label: 'Only where', kind: 'condition', optional: true, help: 'The candidate is available under the “Call each one” name.' },
+      { name: 'do', label: 'Steps', kind: 'effects' },
+    ],
+    make: () => ({ op: 'forEachLocation', kind: 'hex', as: 'loc', do: [] }),
+  },
   chooseOption: {
     key: 'chooseOption', label: 'Choose one option', category: 'Choices', shape: 'flat',
     description: 'Ask a player to pick one of several labelled options, each with its own steps.',

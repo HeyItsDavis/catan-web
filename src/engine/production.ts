@@ -1,7 +1,7 @@
 /**
  * Resource production. A hex produces when its number is rolled (or when targeted directly),
- * it is revealed, and no token with `blocksProduction` sits on it. Every vertex piece with
- * productionMultiplier > 0 on its corners receives terrain.produces x multiplier plus any
+ * it is revealed, and no token with `blocksProduction` sits on it. Every piece with
+ * productionMultiplier > 0 on its corners (or on its edges / the hex itself) receives terrain.produces x multiplier plus any
  * matching productionBonus. Bank shortage rule: if the bank can't cover all claims for a
  * resource and more than one player claims it, nobody receives that resource.
  * Gold-style terrains (producesChoice) are returned as owed choices for the interpreter.
@@ -10,7 +10,7 @@ import type { Id } from './schema';
 import { type Ctx, emit, log, piecesAt, playerName, playersFrom } from './context';
 import { evalResourceMap } from './exprs';
 import { bankHas, moveResource } from './resources';
-import { hexCorners, parseHexId } from './board/topology';
+import { hexCorners, hexEdges, parseHexId } from './board/topology';
 
 export interface GoldOwed { player: string; amount: number; options?: Id[] }
 
@@ -38,7 +38,9 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
     if (!hex.revealed || hexBlocked(ctx, hid)) continue;
     const terr = ctx.L.terrains.get(hex.terrain);
     if (!terr) continue;
-    for (const v of hexCorners(parseHexId(hid))) {
+    const c = parseHexId(hid);
+    // corner pieces (settlements, cities), plus edge pieces (touch 2 hexes) and pieces on the hex itself
+    for (const v of [...hexCorners(c), ...hexEdges(c), hid]) {
       for (const pc of piecesAt(ctx, v)) {
         if (opts.player && pc.owner !== opts.player) continue;
         const pdef = ctx.L.pieces.get(pc.type);
