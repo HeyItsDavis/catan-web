@@ -15,6 +15,7 @@
  *    (see context.isBuilding); default 2 = the standard rule (no building on an adjacent vertex).
  *  - hasToken.near: the token is on `at` or on a location adjacent to it.
  *  - isNetworkEnd: see isNetworkEnd() below. sameRegion: see regions.ts.
+ *  - hexTag: like terrainIs, but tests the map's hex tags.
  *  Any location var may hold a piece instance id instead (= that piece's location).
  */
 import type { Condition } from './schema';
@@ -132,6 +133,11 @@ export function evalCond(ctx: Ctx, env: Env, c: Condition | undefined): boolean 
     if (!a || !b) return false;
     const rb = regionsOf(ctx, b);
     return [...regionsOf(ctx, a)].some((r) => rb.has(r));
+  }
+  if ('hexTag' in c) {
+    const loc = locOf(ctx, env, c.hexTag.at);
+    if (!loc) return false;
+    return hexesOf(boardTopo(ctx.s), loc).some((h) => !!ctx.s.hexes[h]?.tags?.includes(c.hexTag.tag));
   }
   if ('hexNumberIn' in c) {
     const loc = locOf(ctx, env, c.hexNumberIn.at);

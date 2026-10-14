@@ -28,7 +28,7 @@ const EFFECT_OPS = new Set([
 const COND_KEYS = [
   'all', 'any', 'not', 'cmp', 'canAfford', 'isTurnOf', 'phase', 'hasRolled', 'flag', 'setting', 'samePlayer', 'varSet', 'varIs',
   'terrainIs', 'isWater', 'isCoastal', 'occupied', 'adjacentTo', 'connectedTo', 'distanceRule', 'hasToken', 'hexNumberIn',
-  'isAdjacent', 'isNetworkEnd', 'sameRegion',
+  'isAdjacent', 'isNetworkEnd', 'sameRegion', 'hexTag',
 ];
 const EXPR_KEYS = [
   'var', 'param', 'add', 'sub', 'mul', 'div', 'min', 'max', 'if', 'random', 'resourceCount', 'pieceCount', 'cardCount',
@@ -203,6 +203,12 @@ class Validator {
         break;
       }
       case 'isWater': case 'isCoastal': case 'distanceRule': case 'hexNumberIn': at(x[k] as { at: string }, `${path}.${k}`); break;
+      case 'hexTag': {
+        const q = x.hexTag as { at: string; tag: string };
+        at(q, `${path}.hexTag`);
+        if (typeof q?.tag !== 'string' || !q.tag) this.err(`${path}.hexTag.tag`, 'Needs a tag name');
+        break;
+      }
       case 'occupied': case 'adjacentTo': {
         const q = x[k] as { at: string; piece?: string | string[]; owner?: PlayerRef | 'any' | 'others' };
         at(q, `${path}.${k}`);

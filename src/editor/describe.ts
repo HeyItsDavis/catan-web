@@ -300,6 +300,10 @@ export function describeCondition(c: Condition | undefined, ctx: DescribeContext
       const [a, b] = x.sameRegion as [string, string];
       return `“${a}” is on the same island as “${b}”`;
     }
+    case 'hexTag': {
+      const o = x.hexTag as { at: string; tag: string };
+      return `${loc(o)} touches a hex marked “${o.tag}”`;
+    }
     case 'hexNumberIn': {
       const o = x.hexNumberIn as { at: string; numbers: number[] };
       return `${loc(o)} has number ${list((o.numbers ?? []).map(String), 'or')}`;
