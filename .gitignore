@@ -25,3 +25,8 @@ dist-ssr
 
 # Claude Code local state / agent worktrees
 .claude/
+
+# Playwright
+e2e/.results/
+e2e/.shots/
+playwright-report/

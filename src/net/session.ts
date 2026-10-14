@@ -9,6 +9,7 @@ import { getPlayerId, getPlayerSecret, getSavedName } from './identity';
 import { listenPeer, peerConnector, RoomIdTakenError } from './peerTransport';
 import { generateRoomCode } from './roomCode';
 import { Emitter, type Unsubscribe } from './transport';
+import { registerHost } from './testHooks';
 
 export type HostNetStatus = 'starting' | 'online' | 'retrying' | 'error';
 export interface HostNetState { status: HostNetStatus; message: string | null }
@@ -75,6 +76,7 @@ function startHostSession(code: string): RoomSession {
     hostPlayer: { id: playerId, name: getSavedName() || 'Host' },
     saved: loadSavedRoom(),
   });
+  registerHost(host);
   const hostNet = new Store<HostNetState>({ status: 'starting', message: null });
   let destroyed = false;
   let retry: ReturnType<typeof setTimeout> | null = null;

@@ -168,11 +168,16 @@ export function GameLog({ state }: { state: GameState }) {
       {state.log.length === 0 && <div className="g-muted g-small">Nothing yet.</div>}
       {state.log.slice(-200).map((e, i) => {
         const p = e.player ? colors.get(e.player) : undefined;
+        // Engine log lines usually already start with the player's name: bold it instead of repeating it.
+        const named = !!p && e.text.startsWith(p.name);
         return (
           <div key={i} className="g-log-row">
             {p && <PlayerDot color={p.color} size={8} />}
-            {p && <b className="g-log-name">{p.name}</b>}
-            <span>{e.text}</span>
+            {named ? (
+              <span><b className="g-log-name">{p!.name}</b>{e.text.slice(p!.name.length)}</span>
+            ) : (
+              <span>{e.text}</span>
+            )}
           </div>
         );
       })}

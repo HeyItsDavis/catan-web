@@ -7,6 +7,6 @@ export default defineConfig({
   base: './',
   plugins: [react()],
   test: {
-    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', '.claude/**', 'e2e/**'],
   },
 })

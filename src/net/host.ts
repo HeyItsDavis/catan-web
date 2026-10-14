@@ -137,6 +137,18 @@ export class HostRoom {
   /** Definition for the room's current mods (null if the engine cannot build it). */
   getDefinition(): GameDefinition | null { return this.tryDef(this.lobby.mods); }
 
+  /**
+   * Test/debug only (see net/testHooks.ts): replace the authoritative game state and
+   * broadcast it. Never called by the app itself.
+   */
+  debugSetGame(game: GameState): void {
+    if (this.destroyed || !this.game) return;
+    this.game = game;
+    this.broadcastGame();
+    this.refreshTimer();
+    this.persist();
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;

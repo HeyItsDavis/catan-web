@@ -433,7 +433,7 @@ export function Board({ def, state, pick }: Props) {
               const coord = h?.coord ?? (() => { const [q, r] = id.slice(2).split(',').map(Number); return { q, r }; })();
               const corners = hexCornerPoints(coord, S);
               return (
-                <polygon key={id} points={pts(scalePoly(corners, hexToPixel(coord, S), 0.94))} className="g-hl g-hl-hex" onClick={click(id)}>
+                <polygon key={id} points={pts(scalePoly(corners, hexToPixel(coord, S), 0.94))} className="g-hl g-hl-hex" data-loc={id} onClick={click(id)}>
                   <title>Choose this hex</title>
                 </polygon>
               );
@@ -442,7 +442,7 @@ export function Board({ def, state, pick }: Props) {
               const { a, b } = edgeToPixel(id, S);
               const t = 0.2;
               return (
-                <g key={id} className="g-hl g-hl-edge" onClick={click(id)}>
+                <g key={id} className="g-hl g-hl-edge" data-loc={id} onClick={click(id)}>
                   <line x1={a.x + (b.x - a.x) * t} y1={a.y + (b.y - a.y) * t} x2={b.x + (a.x - b.x) * t} y2={b.y + (a.y - b.y) * t} className="g-hl-edge-line" strokeWidth={S * 0.14} />
                   <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={S * 0.3} />
                 </g>
@@ -451,7 +451,7 @@ export function Board({ def, state, pick }: Props) {
             {[...hl].filter((id) => id.startsWith('v:')).map((id) => {
               const c = vertexToPixel(id, S);
               return (
-                <g key={id} className="g-hl g-hl-vertex" onClick={click(id)}>
+                <g key={id} className="g-hl g-hl-vertex" data-loc={id} onClick={click(id)}>
                   <circle cx={c.x} cy={c.y} r={S * 0.3} fill="transparent" />
                   <circle cx={c.x} cy={c.y} r={S * 0.13} className="g-hl-vertex-dot" />
                 </g>
