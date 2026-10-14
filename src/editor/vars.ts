@@ -4,7 +4,7 @@
  * payloads, the implicit `at` of placement rules and location filters).
  */
 import type { Effect } from '../engine/schema';
-import { EFFECTS, EVENTS, effectSpec, type VarType } from './catalog';
+import { EFFECTS, EVENTS, effectSpec, type BlockSpec, type VarType } from './catalog';
 
 export interface VarInfo {
   name: string;
@@ -74,6 +74,13 @@ export function innerScope(e: Effect, paramName: string, scope: VarInfo[]): VarI
 
 export function atScope(): VarInfo[] {
   return [AT_LOCATION];
+}
+
+/** Loop vars declared by a condition / expr block (e.g. countPlayers `as`), visible to its own params. */
+export function loopVarsOf(spec: BlockSpec<unknown>, values: Record<string, unknown>): VarInfo[] {
+  return spec.params
+    .filter(p => p.kind === 'varName' && p.loopVar && typeof values[p.name] === 'string' && values[p.name])
+    .map(p => ({ name: values[p.name] as string, type: p.binds ?? 'any', source: spec.label }));
 }
 
 /** Vars visible inside a PieceQuery `where`: the candidate piece. */

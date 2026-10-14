@@ -94,6 +94,11 @@ function evalRaw(ctx: Ctx, env: Env, e: Expr): number {
     if (e.cargoCount.key !== undefined) return pc.cargo[e.cargoCount.key] ?? 0;
     return Object.values(pc.cargo).reduce((a, b) => a + b, 0);
   }
+  if ('countPlayers' in e) {
+    const vars = { ...env.vars };
+    const e2: Env = { self: env.self, vars };
+    return ctx.s.turnOrder.filter((pid) => { vars[e.countPlayers.as] = pid; return evalCond(ctx, e2, e.countPlayers.filter); }).length;
+  }
   return 0;
 }
 

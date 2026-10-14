@@ -26,13 +26,13 @@ const EFFECT_OPS = new Set([
 ]);
 
 const COND_KEYS = [
-  'all', 'any', 'not', 'cmp', 'canAfford', 'isTurnOf', 'phase', 'hasRolled', 'flag', 'setting', 'samePlayer', 'varSet',
+  'all', 'any', 'not', 'cmp', 'canAfford', 'isTurnOf', 'phase', 'hasRolled', 'flag', 'setting', 'samePlayer', 'varSet', 'varIs',
   'terrainIs', 'isWater', 'isCoastal', 'occupied', 'adjacentTo', 'connectedTo', 'distanceRule', 'hasToken', 'hexNumberIn',
   'isAdjacent', 'isNetworkEnd', 'sameRegion',
 ];
 const EXPR_KEYS = [
   'var', 'param', 'add', 'sub', 'mul', 'div', 'min', 'max', 'if', 'random', 'resourceCount', 'pieceCount', 'cardCount',
-  'stat', 'global', 'vp', 'dice', 'playerCount', 'longestRoad', 'pieceState', 'sumPieceState', 'cargoCount',
+  'stat', 'global', 'vp', 'dice', 'playerCount', 'longestRoad', 'pieceState', 'sumPieceState', 'cargoCount', 'countPlayers',
 ];
 const PHASES = ['setup', 'preRoll', 'main', 'specialBuild', 'gameOver'];
 const KINDS = ['hex', 'vertex', 'edge'];
@@ -140,6 +140,12 @@ class Validator {
       case 'longestRoad': this.player(`${path}.longestRoad`, x.longestRoad as PlayerRef, sc); break;
       case 'pieceState': this.varUse(`${path}.pieceState.piece`, (x.pieceState as { piece?: string })?.piece, sc); break;
       case 'cargoCount': this.varUse(`${path}.cargoCount.piece`, (x.cargoCount as { piece?: string })?.piece, sc); break;
+      case 'countPlayers': {
+        const q = x.countPlayers as { as: string; filter?: Condition };
+        if (!q?.as) { this.err(`${path}.countPlayers.as`, 'countPlayers needs "as"'); break; }
+        this.cond(`${path}.countPlayers.filter`, q.filter, { vars: new Set([...sc.vars, q.as]), lenient: sc.lenient });
+        break;
+      }
       case 'sumPieceState': this.query(`${path}.sumPieceState.query`, (x.sumPieceState as { query: PieceQuery })?.query, sc); break;
     }
   }
@@ -179,6 +185,7 @@ class Validator {
       case 'setting': this.setting(`${path}.setting`, x.setting); break;
       case 'samePlayer': (x.samePlayer as PlayerRef[]).forEach((r, i) => this.player(`${path}.samePlayer[${i}]`, r, sc)); break;
       case 'varSet': break;
+      case 'varIs': this.varUse(`${path}.varIs.var`, (x.varIs as { var?: string })?.var, sc); break;
       case 'isAdjacent': case 'sameRegion':
         if (!Array.isArray(x[k]) || (x[k] as string[]).length !== 2) { this.err(`${path}.${k}`, 'Expected [location, location]'); break; }
         (x[k] as string[]).forEach((v, i) => this.varUse(`${path}.${k}[${i}]`, v, sc)); break;

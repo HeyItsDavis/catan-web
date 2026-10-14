@@ -96,7 +96,10 @@ export type Expr =
    *  `{sumPieceState: {query: {tag: 'knight', owner: 'self', state: {active: 1}}, key: 'strength'}}`). */
   | { sumPieceState: { query: PieceQuery; key: string } }
   /** Amount of cargo carried by a piece (see loadCargo / addCargo). Omit `key` = total of all cargo. */
-  | { cargoCount: { piece: string; key?: Id } };
+  | { cargoCount: { piece: string; key?: Id } }
+  /** How many players satisfy `filter` (candidate bound as `as`). E.g. "nobody is stronger than p":
+   *  `{cmp: [{countPlayers: {as: 'q', filter: {cmp: [strength(q), '>', strength(p)]}}}, '==', 0]}`. */
+  | { countPlayers: { as: string; filter?: Condition } };
 
 export interface PieceQuery {
   owner?: PlayerRef | 'any' | 'others';
@@ -139,6 +142,9 @@ export type Condition =
   | { setting: string }                                 // boolean lobby setting is on
   | { samePlayer: [PlayerRef, PlayerRef] }
   | { varSet: string }
+  /** A var holds exactly this id/text, e.g. on `piecePlaced`: `{varIs: {var: 'piece', value: 'settlement'}}`,
+   *  on `awardChanged`: `{varIs: {var: 'award', value: 'longestRoad'}}`. (Numbers: use `cmp`.) */
+  | { varIs: { var: string; value: string } }
   /** Location-scoped tests, used inside placement rules and choose filters. `at` is a var. */
   | { terrainIs: { at: string; terrain: Id | Id[] } }
   | { isWater: { at: string } }

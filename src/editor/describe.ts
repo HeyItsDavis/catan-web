@@ -194,6 +194,12 @@ export function describeExpr(e: Expr | null | undefined, ctx: DescribeContext = 
       const o = (x.cargoCount ?? {}) as { piece: string; key?: string };
       return o.key ? `the ${prettify(o.key)} carried by “${o.piece}”` : `the cargo carried by “${o.piece}”`;
     }
+    case 'countPlayers': {
+      const o = (x.countPlayers ?? {}) as { as: string; filter?: Condition };
+      return o.filter === undefined || o.filter === true
+        ? 'the number of players'
+        : `the number of players “${o.as}” where ${describeCondition(o.filter, ctx)}`;
+    }
   }
   return spec.label;
 }
@@ -252,6 +258,10 @@ export function describeCondition(c: Condition | undefined, ctx: DescribeContext
       return `${describePlayer(a, ctx)} ${a === 'self' || a === undefined ? 'are' : 'is'} ${describePlayer(b, ctx)}`;
     }
     case 'varSet': return `“${x.varSet}” has been chosen`;
+    case 'varIs': {
+      const o = (x.varIs ?? {}) as { var: string; value: string };
+      return `“${o.var}” is “${o.value}”`;
+    }
     case 'terrainIs': {
       const o = x.terrainIs as { at: string; terrain: string | string[] };
       return `${loc(o)} is ${oneOrMany(ctx, 'terrains', o.terrain)}`;

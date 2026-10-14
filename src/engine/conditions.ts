@@ -61,6 +61,10 @@ export function evalCond(ctx: Ctx, env: Env, c: Condition | undefined): boolean 
     return a !== null && a === b;
   }
   if ('varSet' in c) return env.vars[c.varSet] !== undefined && env.vars[c.varSet] !== null;
+  if ('varIs' in c) {
+    const v = env.vars[c.varIs.var];
+    return v !== undefined && v !== null && String(v) === String(c.varIs.value);
+  }
   if ('isAdjacent' in c) {
     const a = locOf(ctx, env, c.isAdjacent[0]);
     const b = locOf(ctx, env, c.isAdjacent[1]);

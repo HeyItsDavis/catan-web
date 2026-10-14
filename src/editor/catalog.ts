@@ -719,6 +719,15 @@ export const CONDITIONS: ConditionCatalog = {
     params: [{ name: 'var', label: 'Variable', kind: 'varRef', varType: 'any', default: '' }],
     make: () => ({ varSet: '' }),
   },
+  varIs: {
+    key: 'varIs', label: 'Variable is', category: 'Logic', shape: 'object',
+    description: 'True when a remembered value is exactly this id or text (e.g. the piece placed is “settlement”, the award is “longestRoad”).',
+    params: [
+      { name: 'var', label: 'Variable', kind: 'varRef', varType: 'any', default: 'piece' },
+      { name: 'value', label: 'Is', kind: 'string', default: '' },
+    ],
+    make: () => ({ varIs: { var: 'piece', value: '' } }),
+  },
   terrainIs: {
     key: 'terrainIs', label: 'Terrain is', category: 'Board', shape: 'object',
     description: 'True when the location is (or touches) one of these terrains.',
@@ -978,6 +987,15 @@ export const EXPRS: ExprCatalog = {
       { name: 'key', label: 'Goods', kind: 'key', keySpace: 'cargo', optional: true },
     ],
     make: () => ({ cargoCount: { piece: 'pieceId' } }),
+  },
+  countPlayers: {
+    key: 'countPlayers', label: 'Number of players where', category: 'Turn', shape: 'object',
+    description: 'How many players pass a check, e.g. “nobody has more knights than you” = this is 0 for players with more.',
+    params: [
+      { name: 'as', label: 'Call each one', kind: 'varName', binds: 'player', default: 'q', loopVar: true },
+      { name: 'filter', label: 'Where', kind: 'condition', optional: true, default: true },
+    ],
+    make: () => ({ countPlayers: { as: 'q' } }),
   },
 };
 

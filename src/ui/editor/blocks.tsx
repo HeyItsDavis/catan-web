@@ -12,7 +12,7 @@ import {
 } from '../../editor/catalog';
 import { describeCondition, describeEffect, describeEffects, describeExpr } from '../../editor/describe';
 import { formatPath, type Path } from '../../editor/paths';
-import { atScope, candidateScope, innerScope, mergeScope, scopeAt, varsOfType, type VarInfo } from '../../editor/vars';
+import { atScope, candidateScope, innerScope, loopVarsOf, mergeScope, scopeAt, varsOfType, type VarInfo } from '../../editor/vars';
 import { useEditor } from './context';
 import { Checkbox, MultiRef, NumberInput, NumberMap, NumbersInput, RefSelect, Select, SuggestInput, TextInput, type Opt } from './fields';
 
@@ -225,7 +225,7 @@ export function BlockParams(props: {
   const big = props.inline ? [] : shown.filter(p => isBig(p, values[p.name]));
   const field = (p: ParamSpec) => {
     const pp = [...props.path, ...paramPathSegments(spec, p.name)];
-    const s = props.effect ? innerScope(props.effect, p.name, props.scope) : props.scope;
+    const s = props.effect ? innerScope(props.effect, p.name, props.scope) : mergeScope(props.scope, loopVarsOf(props.spec, values));
     return (
       <ParamRow key={p.name} p={p} value={values[p.name]} onChange={v => set(p.name, v)} path={pp} scope={s} big={isBig(p, values[p.name]) && !props.inline} />
     );
