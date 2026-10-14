@@ -49,7 +49,7 @@ export type LocationId = HexId | VertexId | EdgeId;
  *  'current'  – the player whose turn it is
  *  'bank'     – only valid as a transfer source/target
  *  {var}      – a player bound earlier (e.g. by choosePlayer `as`)
- *  {owner}    – owner of a bound piece/location var
+ *  {ownerOf}  – owner of the piece at a bound location var (a piece instance id also works)
  */
 export type PlayerRef =
   | 'self'
@@ -129,7 +129,9 @@ export type Condition =
   | { occupied: { at: string; piece?: Id | Id[]; owner?: PlayerRef | 'any' | 'others' } }
   | { adjacentTo: { at: string; piece?: Id | Id[]; owner?: PlayerRef | 'any' | 'others'; tag?: string } }
   | { connectedTo: { at: string; owner: PlayerRef; via?: Id[] } } // network reachability
-  | { distanceRule: { at: string; minDistance?: number } }       // no vertex pieces within N edges
+  /** `minDistance` = minimum number of edges between `at` and any building (piece tagged 'building'
+   *  or with productionMultiplier > 0). Default 2 = standard rule (adjacent vertices forbidden). */
+  | { distanceRule: { at: string; minDistance?: number } }
   | { hasToken: { at: string; token: Id } }
   | { hexNumberIn: { at: string; numbers: number[] } }
   /** Two bound location vars are adjacent (hex/vertex/edge incidence or neighbors). Used e.g. by the
@@ -153,6 +155,23 @@ export interface LocationChoice {
   label?: string;
 }
 
+/**
+ * Variable binding conventions (engine decisions, the editor relies on these):
+ *  - `as` on place / upgrade / remove / moveToken / movePiece binds the LOCATION id (vertex/edge/hex id)
+ *    the piece/token ended up at (null if nothing happened). To reach the piece, use location-scoped
+ *    conditions (`occupied`, `{ownerOf: <var>}`) or `setPieceState { at: <var> }`.
+ *  - setPieceState.at is a LOCATION var (the first piece at that location is modified).
+ *  - Choose filters see the CANDIDATE under the op's own `as` name:
+ *      choosePlayer.filter  -> `{var: <as>}` is the candidate player id
+ *      chooseLocation.filter / choosePiece.filter -> `<as>` is the candidate location id
+ *      forEachPlayer.filter -> `{var: <as>}` is the candidate player
+ *    (`at` is NOT rebound, so an enclosing `at`, e.g. the robber hex in TokenDef.onMove, stays visible.)
+ *  - LocationChoice.where, PlacementRule.where/setupWhere and TokenDef.where see the candidate as `at`.
+ *  - During setup the engine binds `lastPlaced` = location of the previous piece placed this setup turn.
+ *  - Action effects get `piece` (location) and `pieceId` for piece actions; card effects get `card`.
+ *  - choosePlayer without a filter offers every player except `self`. Empty option lists bind null
+ *    and continue (use `{varSet}` to test); they never deadlock.
+ */
 export type Effect =
   /* --- control flow --- */
   | { op: 'sequence'; do: Effect[] }
@@ -220,10 +239,15 @@ export type EffectOp = Effect['op'];
 /* ------------------------------------------------------------------------ */
 
 /**
- * Builtin events emitted by the engine. Custom strings (from `emit`) also work.
- * Payload vars available to the trigger: see engine docs per event, e.g.
- *  diceRolled: total, die0, die1 ; piecePlaced: piece, at, owner ;
- *  cardPlayed: card ; resourceGained: resource, amount ; turnStart/turnEnd: player
+ * Builtin events emitted by the engine. Custom strings (from `emit`) also work; their payload vars
+ * are the `emit` payload keys plus `player` (the emitter).
+ * Every trigger also gets `event` (the event name). Payload vars per builtin event: see
+ * EVENT_PAYLOAD_VARS below. Player-valued vars hold player ids, location vars hold location ids,
+ * `piece`/`from` hold piece TYPE ids, `card` a card def id.
+ *
+ * Event dice: rolling fires `diceRolled` with `event0`, `event1`... = the face strings of the event
+ * dice (also `eventDie_<dieId>`), and then fires one custom event per event die NAMED BY ITS FACE
+ * string (payload: total, player, face). E.g. a face 'barbarian' fires triggers with `on: 'barbarian'`.
  */
 export type BuiltinEvent =
   | 'gameStart' | 'setupComplete'
@@ -234,6 +258,28 @@ export type BuiltinEvent =
   | 'cardDrawn' | 'cardPlayed'
   | 'resourceGained' | 'resourceLost'
   | 'tradeCompleted' | 'awardChanged';
+
+export const EVENT_PAYLOAD_VARS: Record<BuiltinEvent, string[]> = {
+  gameStart: [],
+  setupComplete: [],
+  turnStart: ['player'],
+  turnEnd: ['player'],
+  roundEnd: [],
+  diceRolled: ['total', 'player', 'die0', 'die1', 'event0'],   // dieN per numeric die, eventN per event die
+  production: ['roll', 'hex'],                                  // roll = number rolled (null when one hex produced)
+  piecePlaced: ['piece', 'at', 'owner', 'player'],
+  pieceUpgraded: ['from', 'piece', 'at', 'owner', 'player'],
+  pieceRemoved: ['piece', 'at', 'owner', 'player'],
+  pieceMoved: ['piece', 'from', 'at', 'owner', 'player'],      // here `from` is the previous location
+  tokenMoved: ['token', 'at', 'from', 'player'],               // `from` = previous location (or null)
+  hexRevealed: ['at', 'terrain', 'player'],
+  cardDrawn: ['card', 'deck', 'player'],
+  cardPlayed: ['card', 'deck', 'player'],
+  resourceGained: ['player', 'resource', 'amount'],
+  resourceLost: ['player', 'resource', 'amount'],
+  tradeCompleted: ['player', 'with'],                          // with = player id or 'bank'
+  awardChanged: ['award', 'player', 'previous'],               // player/previous may be null
+};
 
 export interface TriggerDef {
   id: Id;
@@ -381,7 +427,8 @@ export interface TokenDef {
   blocksProduction?: boolean;
   /** Effects run after the token is moved (e.g. steal from adjacent player). `at` is bound. */
   onMove?: Effect[];
-  /** Initial placement on map generation: 'desert' | terrain id | 'none'. */
+  /** Initial placement on map generation: 'firstOfTerrain' = the first hex (in map order) whose
+   *  terrain is `startTerrain`; 'none' / omitted = off the board until moved. */
   start?: 'firstOfTerrain' | 'none';
   startTerrain?: Id;
 }
@@ -390,7 +437,8 @@ export interface AwardDef {
   id: Id;
   name: string;
   vp: number;
-  /** Per-player score; the award goes to the strictly highest player >= min. */
+  /** Per-player score, evaluated once per player with `self` = the player being scored.
+   *  The award goes to the strictly highest player >= min. */
   metric: Expr;
   min: number;
   /** Holder keeps it on ties (true for Longest Road / Largest Army). */

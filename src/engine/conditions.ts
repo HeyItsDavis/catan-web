@@ -11,7 +11,8 @@
  *  - connectedTo: edge – an endpoint holds an own piece, or an endpoint not blocked by an opposing
  *    network-breaking piece touches another own network edge (`via` piece types, default any piece
  *    with a `network`); vertex – an own network piece on an incident edge (or own piece on it).
- *  - distanceRule: no "building" (see context.isBuilding) within `minDistance` (default 1) edges.
+ *  - distanceRule: `minDistance` = minimum number of edges between `at` and any "building"
+ *    (see context.isBuilding); default 2 = the standard rule (no building on an adjacent vertex).
  */
 import type { Condition } from './schema';
 import { type Ctx, type Env, currentPlayerId, findPlayer, isBuilding, piecesAt, settingValue } from './context';
@@ -101,7 +102,7 @@ export function evalCond(ctx: Ctx, env: Env, c: Condition | undefined): boolean 
   if ('distanceRule' in c) {
     const loc = locVar(env, c.distanceRule.at);
     if (!loc) return false;
-    return distanceOk(ctx, loc, c.distanceRule.minDistance ?? 1);
+    return distanceOk(ctx, loc, (c.distanceRule.minDistance ?? 2) - 1);
   }
   if ('hasToken' in c) {
     const loc = locVar(env, c.hasToken.at);

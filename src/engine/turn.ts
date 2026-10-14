@@ -171,6 +171,11 @@ export function doRoll(ctx: Ctx): void {
   log(ctx, `${playerName(ctx, pid)} rolls ${total}${events.length ? ` (${events.join(', ')})` : ''}`, pid);
   const payload: Record<string, number | string> = { total, player: pid };
   values.forEach((v, i) => { payload[`die${i}`] = v; });
-  (ctx.def.dice.eventDice ?? []).forEach((ed, i) => { payload[`eventDie_${ed.id}`] = events[i]; });
+  (ctx.def.dice.eventDice ?? []).forEach((ed, i) => {
+    payload[`event${i}`] = events[i];
+    payload[`eventDie_${ed.id}`] = events[i];
+  });
   emit(ctx, 'diceRolled', payload, pid);
+  // Each event-die face also fires a custom event named by the face string (after diceRolled).
+  for (const face of events) emit(ctx, face, { total, player: pid, face }, pid);
 }

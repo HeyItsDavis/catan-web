@@ -5,6 +5,7 @@
  * Errors: unknown ids, unknown ops / condition / expr shapes, duplicate ids, broken maps.
  * Warnings: variables that are never bound before use, unknown settings, suspicious values.
  */
+import { EVENT_PAYLOAD_VARS } from './schema';
 import type {
   Condition, Effect, Expr, GameDefinition, ModDef, PieceQuery, PlayerRef, ResourceMap, ResourceRef, TriggerDef,
 } from './schema';
@@ -37,22 +38,7 @@ const KINDS = ['hex', 'vertex', 'edge'];
 const TIMINGS = ['ownTurn', 'ownTurnBeforeRoll', 'ownTurnAfterRoll', 'anyTime', 'never', 'immediate'];
 
 /** Variables available in each builtin event's trigger (besides `event`). */
-export const EVENT_PAYLOAD: Record<string, string[]> = {
-  gameStart: [], setupComplete: [], roundEnd: [],
-  turnStart: ['player'], turnEnd: ['player'],
-  diceRolled: ['total', 'player', 'die0', 'die1', 'die2', 'die3'],
-  production: ['roll', 'hex'],
-  piecePlaced: ['piece', 'at', 'owner', 'player'],
-  pieceUpgraded: ['from', 'piece', 'at', 'owner', 'player'],
-  pieceRemoved: ['piece', 'at', 'owner', 'player'],
-  pieceMoved: ['piece', 'from', 'at', 'owner', 'player'],
-  tokenMoved: ['token', 'at', 'from', 'player'],
-  hexRevealed: ['at', 'terrain', 'player'],
-  cardDrawn: ['card', 'deck', 'player'], cardPlayed: ['card', 'deck', 'player'],
-  resourceGained: ['player', 'resource', 'amount'], resourceLost: ['player', 'resource', 'amount'],
-  tradeCompleted: ['player', 'with'],
-  awardChanged: ['award', 'player', 'previous'],
-};
+export const EVENT_PAYLOAD: Record<string, string[]> = EVENT_PAYLOAD_VARS;
 
 type Scope = { vars: Set<string>; lenient: boolean };
 
@@ -480,7 +466,9 @@ export function validateMod(mod: ModDef, available: ModDef[]): Problem[] {
   (mod.meta.extends ?? []).forEach((id, i) => add(id, `meta.extends[${i}]`));
   let def: GameDefinition;
   try {
-    def = mergeMods(sortMods([...chain.filter((m) => m.meta.id !== mod.meta.id), mod]));
+    // Unknown extends were reported above; merge with the ones that exist.
+    const self: ModDef = { ...mod, meta: { ...mod.meta, extends: (mod.meta.extends ?? []).filter((id) => byId.has(id)) } };
+    def = mergeMods(sortMods([...chain.filter((m) => m.meta.id !== mod.meta.id), self]));
   } catch (e) {
     if (e instanceof ModValidationError) return [...problems, ...e.problems];
     throw e;
