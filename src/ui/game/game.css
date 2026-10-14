@@ -429,10 +429,10 @@
     grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
     grid-template-areas:
       'top top'
+      'left left'
       'center right'
-      'bottom bottom'
-      'left left';
-    grid-template-rows: auto minmax(0, 1fr) auto auto;
+      'bottom bottom';
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
   .g-left { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .g-opps { flex-direction: row; flex: 1; }
