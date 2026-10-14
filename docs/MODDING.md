@@ -161,6 +161,11 @@ and *only pieces where* (any check about `candidate` / `candidateId`).
 **Islands** (regions) are groups of land hexes that touch side by side. *On the same island*
 (`sameRegion`) and the piece-query filter *same island* (`region`) use them.
 
+**Map marks.** A map hex can start face-down (`hidden: true`, fog) and can carry free-form
+`tags`. *Hex is marked* (`hexTag`) is true when a spot touches a hex with that tag, so a map can
+say where special rules apply. Seafarers tags small islands `foreign` and forbids starting
+there: `{ "not": { "hexTag": { "at": "at", "tag": "foreign" } } }` in the settlement's `setupWhere`.
+
 ---
 
 ## 6. Recipes

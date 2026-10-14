@@ -168,7 +168,11 @@ export type Condition =
    *  `owner` defaults to the owner of the piece at `at`. */
   | { isNetworkEnd: { at: string; owner?: PlayerRef; via?: Id[] } }
   /** Two bound locations touch a common land region ("island"). See PieceQuery.region. */
-  | { sameRegion: [string, string] };
+  | { sameRegion: [string, string] }
+  /** The location touches a hex that the map marks with this tag (MapDef hex `tags`): a hex tests itself,
+   *  a vertex/edge tests ANY touching on-board hex. E.g. Seafarers: no starting settlement on an island the
+   *  map tags 'foreign': `{not: {hexTag: {at: 'at', tag: 'foreign'}}}`. */
+  | { hexTag: { at: string; tag: string } };
 
 /* ------------------------------------------------------------------------ */
 /*  Effects                                                                  */
@@ -623,7 +627,10 @@ export interface MapDef {
   minPlayers: number;
   maxPlayers: number;
   /** Fixed hexes. `terrain` may be a bag name prefixed with '@' to draw randomly. */
-  hexes: { q: number; r: number; terrain: Id; number?: number | '@'; port?: { port: Id | '@'; side: number } }[];
+  /** `hidden`: the hex starts face-down (fog) whatever its terrain, until a `revealHex`.
+   *  `tags`: free-form marks copied to HexState.tags and tested with the `hexTag` condition
+   *  (e.g. 'foreign' islands where players may not start). */
+  hexes: { q: number; r: number; terrain: Id; number?: number | '@'; port?: { port: Id | '@'; side: number }; hidden?: boolean; tags?: string[] }[];
   /** Bags used for random terrain and number assignment. */
   terrainBags?: Record<string, Id[]>;
   numberBag?: number[];
@@ -772,6 +779,8 @@ export interface HexState {
   terrain: Id;
   number: number | null;
   revealed: boolean;
+  /** Marks from the map (MapDef hex `tags`), tested by the `hexTag` condition. */
+  tags?: string[];
 }
 
 export interface PortInstance {

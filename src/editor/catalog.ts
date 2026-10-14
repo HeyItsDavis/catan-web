@@ -850,6 +850,12 @@ export const CONDITIONS: ConditionCatalog = {
     ],
     make: () => ({ sameRegion: ['at', 'lastPlaced'] }),
   },
+  hexTag: {
+    key: 'hexTag', label: 'Hex is marked', category: 'Board', shape: 'object',
+    description: 'True when the location touches a hex that the map marks with this tag (e.g. “foreign” islands where nobody may start).',
+    params: [at(), { name: 'tag', label: 'Mark', kind: 'string', default: '' }],
+    make: () => ({ hexTag: { at: 'at', tag: '' } }),
+  },
 };
 
 /* ------------------------------------------------------------------------ */

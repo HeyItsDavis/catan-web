@@ -130,6 +130,14 @@ export function MapForm(props: FormProps<MapDef>) {
                     ) : null}
                   </span>
                 </Field>
+                <Field label="Fog" path={[...path, 'hexes', sel, 'hidden']} help="Starts face-down until a rule reveals it.">
+                  <Checkbox value={selected.hidden} label="Starts hidden"
+                    onChange={b => { const h = { ...selected }; if (b) h.hidden = true; else delete h.hidden; setHex(sel, h); }} />
+                </Field>
+                <Field label="Marks" path={[...path, 'hexes', sel, 'tags']} help="Free tags that rules can test with “Hex is marked” (e.g. foreign).">
+                  <ListInput value={selected.tags} placeholder="foreign"
+                    onChange={l => { const h = { ...selected }; if (l?.length) h.tags = l; else delete h.tags; setHex(sel, h); }} />
+                </Field>
               </>
             ) : <div className="me-muted">Select a hex.</div>}
           </div>

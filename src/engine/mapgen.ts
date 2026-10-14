@@ -4,6 +4,7 @@
  *  - number: explicit value; '@' draws from numberBag; omitted -> drawn from numberBag if the
  *    terrain is `numbered` and a bag exists, else none;
  *  - noAdjacentRedNumbers: reshuffle numbers until no two 6/8 tokens are neighbours;
+ *  - `hidden` hexes start face-down (fog); `tags` are copied onto the HexState;
  *  - port '@' draws from portBag. A port on hex side i is granted by that side's two corners.
  */
 import type { GameDefinition, HexState, MapDef, PortInstance } from './schema';
@@ -28,7 +29,8 @@ export function generateMap(r: RngHolder, def: GameDefinition, map: MapDef): { h
     let number: number | null = null;
     if (typeof h.number === 'number') number = h.number;
     else if (h.number === '@' || (h.number === undefined && tdef?.numbered && map.numberBag)) needNumber.push(id);
-    hexes[id] = { id, coord: { q: h.q, r: h.r }, terrain, number, revealed: !tdef?.hidden };
+    hexes[id] = { id, coord: { q: h.q, r: h.r }, terrain, number, revealed: !tdef?.hidden && !h.hidden };
+    if (h.tags?.length) hexes[id].tags = [...h.tags];
   }
   if (needNumber.length) {
     const bag = map.numberBag ?? [];
