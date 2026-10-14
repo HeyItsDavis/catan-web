@@ -47,6 +47,10 @@ test('make a mod in the editor and play it with a friend', async ({ browser }) =
     await page.locator('.me-coll-form select', { hasText: 'Add to deck…' }).selectOption({ label: 'Spice Deck' });
     await expect(page.locator('.me-coll-form')).toContainText('Spice Deck ×1');
 
+    await openTab(page, 'Settings');
+    await page.getByRole('button', { name: '✦ On/off setting' }).click();
+    await rename(page, 'settings[0].name', 'Spicy mode');
+
     await expect(page.locator('.me-save')).toContainText('Saved', { timeout: 5000 });
     await expect(page.locator('.me-issues-btn')).toContainText('No problems');
     await shot(host, 'mod-editor-done');
@@ -58,6 +62,14 @@ test('make a mod in the editor and play it with a friend', async ({ browser }) =
     expect(mod.terrains[0].produces).toEqual({ spice: 1 }); // reference followed the rename
     expect(mod.decks[0]).toMatchObject({ id: 'spice-deck', cards: [{ card: 'windfall', count: 1 }] });
     expect(mod.actions[0]).toMatchObject({ id: 'brew-tea', name: 'Brew Tea' });
+    expect(mod.settings[0]).toMatchObject({ id: 'spicy-mode', type: 'boolean' });
+
+    // Export downloads the same JSON.
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: /Export/ }).first().click();
+    const file = await (await download).path();
+    const exported = JSON.parse((await import('node:fs')).readFileSync(file, 'utf8'));
+    expect(exported.meta.id).toBe('spice-trade');
   });
 
   await test.step('host enables the mod in a room; guest sees it', async () => {
@@ -71,6 +83,13 @@ test('make a mod in the editor and play it with a friend', async ({ browser }) =
     await expect(page.locator('.mod-list')).toContainText('Spice Trade');
     await guest.page.getByRole('tab', { name: /Mods/ }).click();
     await expect(guest.page.locator('.mod-list')).toContainText('Spice Trade');
+    // The mod's lobby setting shows up for both; the host flips it.
+    await page.getByRole('tab', { name: 'Game settings' }).click();
+    await guest.page.getByRole('tab', { name: 'Game settings' }).click();
+    const spicy = (pg: typeof page) => pg.locator('.setting-row', { hasText: 'Spicy mode' }).getByRole('switch');
+    await expect(spicy(guest.page)).toHaveAttribute('aria-checked', 'false');
+    await spicy(page).click();
+    await expect(spicy(guest.page)).toHaveAttribute('aria-checked', 'true');
     await guest.page.getByRole('button', { name: "I'm ready" }).click();
     await page.getByRole('button', { name: 'Start game' }).click();
     await expect(guest.page.locator('.g-root')).toBeVisible();
@@ -123,6 +142,27 @@ test('make a mod in the editor and play it with a friend', async ({ browser }) =
     await shot(guest, 'mod-recipe-used');
   });
 
+  expect(host.errors).toEqual([]);
+  expect(guest.errors).toEqual([]);
+});
+
+test('upload a mod file in the lobby', async ({ browser }) => {
+  const host = await newPlayer(browser, 'Ada');
+  const guest = await newPlayer(browser, 'Bob');
+  await createRoom(host);
+  await joinViaLink(guest, await copyInviteLink(host));
+  await host.page.getByRole('tab', { name: /Mods/ }).click();
+  await host.page.locator('.mods input[type=file]').setInputFiles('e2e/fixtures/harvest-festival.json');
+  await expect(host.page.locator('.mod-list')).toContainText('Harvest Festival');
+  // The mod's VP target becomes the room default.
+  await host.page.getByRole('tab', { name: 'Game settings' }).click();
+  await expect(guest.page.locator('.setting-row', { hasText: 'Points to win' })).toContainText('12');
+  await guest.page.getByRole('button', { name: "I'm ready" }).click();
+  await host.page.getByRole('button', { name: 'Start game' }).click();
+  for (const p of [host, guest]) await expect(p.page.locator('.g-abtn[title^="Hold a festival"]')).toBeVisible();
+  // Uploaded mods are kept in the uploader's library.
+  const lib = await host.page.evaluate(() => localStorage.getItem('catanweb:mods') ?? '');
+  expect(lib).toContain('harvest-festival');
   expect(host.errors).toEqual([]);
   expect(guest.errors).toEqual([]);
 });

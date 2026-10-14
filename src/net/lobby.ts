@@ -206,8 +206,16 @@ export function lobbyReducer(state: LobbyState, action: LobbyAction, ctx: LobbyC
         return err(`Mods rejected: ${e instanceof Error ? e.message : String(e)}`);
       }
       const next: LobbyState = { ...state, mods: checked.mods };
+      // Values the host never changed follow the rules' defaults (a mod may play to 12 VP).
+      const prev = state.settings;
+      const followDefault = (cur: number, oldDefault: number | undefined, newDefault: number) =>
+        cur === (oldDefault ?? cur) ? newDefault : cur;
+      const adopted = {
+        victoryPoints: followDefault(prev.victoryPoints, ctx.def?.victoryPoints, def.victoryPoints),
+        discardLimit: followDefault(prev.discardLimit, ctx.def?.discardLimit, def.discardLimit),
+      };
       // Re-validate settings against the new definition (map may vanish, new mod settings appear).
-      const res = sanitizeSettings({ ...state.settings, mods: checked.mods.map((m) => m.meta.id) }, next, def);
+      const res = sanitizeSettings({ ...prev, ...adopted, mods: checked.mods.map((m) => m.meta.id) }, next, def);
       if (!res.ok) return res;
       return ok({ ...next, settings: res.settings, players: unreadyGuests(state.players) });
     }

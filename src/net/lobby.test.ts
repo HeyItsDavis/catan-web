@@ -116,6 +116,20 @@ describe('lobby reducer', () => {
     expect(s.settings.modSettings).toEqual({});
   });
 
+  it("untouched VP / discard limit follow a mod's defaults; customised ones stay", () => {
+    const big = mod('big-game', { victoryPoints: 13, discardLimit: 9 });
+    let s = run(fresh(), { type: 'mods', by: 'h', mods: [big] });
+    expect([s.settings.victoryPoints, s.settings.discardLimit]).toEqual([13, 9]);
+    // Removing the mod goes back to the base defaults (ctx.def = rules with the mod).
+    const withBig: LobbyContext = { ...ctx, def: fakeEngine.buildDefinition([big]) };
+    let r = lobbyReducer(s, { type: 'mods', by: 'h', mods: [] }, withBig);
+    expect(r.ok && [r.state.settings.victoryPoints, r.state.settings.discardLimit]).toEqual([10, 7]);
+    // A host-chosen value is kept.
+    s = run(fresh(), { type: 'settings', by: 'h', settings: { ...fresh().settings, victoryPoints: 8 } });
+    r = lobbyReducer(s, { type: 'mods', by: 'h', mods: [big] }, ctx);
+    expect(r.ok && [r.state.settings.victoryPoints, r.state.settings.discardLimit]).toEqual([8, 9]);
+  });
+
   it('kicks and bans', () => {
     let s = run(fresh(), { type: 'join', playerId: 'a', name: 'A' });
     s = run(s, { type: 'kick', by: 'h', playerId: 'a' });

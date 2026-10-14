@@ -14,7 +14,8 @@ export function makeDef(mods: ModDef[] = []): GameDefinition {
     mods: mods.map((m) => m.meta), resources: [], terrains: [], pieces: [], cards: [], decks: [], actions: [],
     tokens: [], awards: [], ports: [], maps, triggers: [], settings, dice: { numeric: [{ sides: 6 }, { sides: 6 }] },
     setup: [], trade: { bankRates: { resource: 4 }, playerTrading: true, onlyCurrentPlayer: true },
-    victoryPoints: 10, discardLimit: 7,
+    victoryPoints: mods.reduce((v, m) => m.victoryPoints ?? v, 10),
+    discardLimit: mods.reduce((v, m) => m.discardLimit ?? v, 7),
   };
 }
 

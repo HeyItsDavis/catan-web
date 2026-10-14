@@ -1,0 +1,14 @@
+{
+  "meta": { "id": "harvest-festival", "name": "Harvest Festival", "version": "1.0.0", "extends": ["base"],
+    "description": "Once per turn, turn 2 grain into 1 victory point." },
+  "actions": [
+    {
+      "id": "festival", "name": "Hold a festival", "group": "special",
+      "cost": { "grain": 2 },
+      "available": { "all": [{ "isTurnOf": "self" }, { "hasRolled": true }] },
+      "effect": [{ "op": "addVP", "amount": 1, "reason": "festival" }],
+      "limitPerTurn": 1
+    }
+  ],
+  "victoryPoints": 12
+}
