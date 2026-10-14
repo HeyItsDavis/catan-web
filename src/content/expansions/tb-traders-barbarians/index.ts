@@ -30,7 +30,7 @@
  *
  *  Play to 13 victory points.
  */
-import type { Condition, Effect, MapDef, ModDef, TokenDef } from '../../../engine/schema';
+import type { Condition, Effect, Expr, MapDef, ModDef, TokenDef } from '../../../engine/schema';
 import { baseMod } from '../../base';
 
 /* --------------------------------- map ---------------------------------- */
@@ -59,10 +59,10 @@ const myTurn: Condition[] = [{ isTurnOf: 'self' }, { phase: 'main' }];
 const BANDS = ['barbarianA', 'barbarianB', 'barbarianC'];
 const CAPACITY = 2;
 
-const state = (key: string) => ({ pieceState: { piece: 'pieceId', key } });
+const state = (key: string): Expr => ({ pieceState: { piece: 'pieceId', key } });
 /** Movement points this wagon has left this turn. */
-const movesLeft = { sub: [{ add: [4, state('extra')] }, state('moved')] };
-const cargo = (key?: string) => ({ cargoCount: key ? { piece: 'pieceId', key } : { piece: 'pieceId' } });
+const movesLeft: Expr = { sub: [{ add: [4, state('extra')] }, state('moved')] };
+const cargo = (key?: string): Expr => ({ cargoCount: key ? { piece: 'pieceId', key } : { piece: 'pieceId' } });
 const hasRoom: Condition = { cmp: [cargo(), '<', CAPACITY] };
 const at = (terrain: string): Condition => ({ terrainIs: { at: 'piece', terrain } });
 

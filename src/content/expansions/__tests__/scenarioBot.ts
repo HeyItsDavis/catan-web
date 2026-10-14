@@ -49,12 +49,36 @@ function extraMove(def: GameDefinition, s: GameState, rnd: Rand, weights: Action
   return null;
 }
 
+/**
+ * Movement prompts (a piece being moved): look one step ahead and prefer destinations from which
+ * the moved piece has a valuable action available (by `weights`), e.g. a wagon heading for the
+ * quarry or a ship returning to its harbor to pick up a settler.
+ */
+function lookAhead(def: GameDefinition, s: GameState, rnd: Rand, weights: ActionWeights, movingId: string | null): [string, Command] | null {
+  const pr = s.prompts[0];
+  const moving = movingId ? s.pieces.find((p) => p.id === movingId) : undefined;
+  if (!pr || pr.kind !== 'location' || !moving || pr.piece !== moving.type || s.prompts.length > 1 || !Object.keys(weights).length) return null;
+  let best: string[] = [];
+  let bestScore = 0;
+  for (const opt of pr.options) {
+    // cheap preview: the piece standing on `opt`, nothing pending
+    const preview: GameState = { ...s, prompts: [], stack: [], pieces: s.pieces.map((p) => (p.id === moving.id ? { ...p, at: opt } : p)) };
+    const score = getAvailableMoves(def, preview, pr.player).actions
+      .filter((a) => a.enabled && a.pieceId === moving.id)
+      .reduce((acc, a) => acc + (weights[a.action.id] ?? 0), 0);
+    if (score > bestScore) { bestScore = score; best = [opt]; } else if (score === bestScore && score > 0) best.push(opt);
+  }
+  if (!best.length || rnd() < 0.2) return null;
+  return [pr.player, { type: 'respond', promptId: pr.id, answer: pick(rnd, best) }];
+}
+
 /** Play until someone wins or `maxTurns` pass. At most `perTurn` extra moves per turn. */
 export function simulateScenario(def: GameDefinition, s: GameState, seed: number, maxTurns = 400, perTurn = 6, weights: ActionWeights = {}): GameState {
   const rnd = mulberry(seed);
   let n = 0;
   let extraTurn = -1;
   let extras = 0;
+  let movingId: string | null = null; // piece of the last piece action (for lookAhead)
   while (!s.winner && s.turn <= maxTurns) {
     if (++n > 200_000) throw new Error('too many commands');
     if (s.phase === 'main' && !s.prompts.length && !s.stack.length && def.trade.playerTrading && rnd() < 0.03) {
@@ -65,9 +89,9 @@ export function simulateScenario(def: GameDefinition, s: GameState, seed: number
     if (extra) {
       extras++;
       const r = applyCommand(def, s, extra[0], extra[1]);
-      if (r.ok) { s = r.state; continue; }
+      if (r.ok) { s = r.state; movingId = extra[1].type === 'doAction' ? extra[1].pieceId ?? null : null; continue; }
     }
-    const [pid, cmd] = botMove(def, s, rnd);
+    const [pid, cmd] = lookAhead(def, s, rnd, weights, movingId) ?? botMove(def, s, rnd);
     const r = applyCommand(def, s, pid, cmd);
     if (!r.ok) throw new Error(`bot command ${JSON.stringify(cmd)} failed: ${r.error}`);
     s = r.state;
