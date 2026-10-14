@@ -290,6 +290,10 @@ export type Effect =
   | { op: 'giveCard'; card: Id; player?: PlayerRef }                 // from supply, not a deck
   | { op: 'discardCard'; player?: PlayerRef; card?: Id; choose?: boolean }
   | { op: 'shuffleDeck'; deck: Id }
+  /** Move a card from `from`'s hand into `to`'s hand (default self), optionally only cards of one deck.
+   *  `choose: true` = `to` looks at the eligible cards and picks one (C&K Spy); otherwise random.
+   *  The receiver gets it as a newly acquired card: `cardDrawn` fires for them and hand limits apply. */
+  | { op: 'takeCard'; from: PlayerRef; to?: PlayerRef; deck?: Id; choose?: boolean }
 
   /* --- scoring, stats & state --- */
   | { op: 'addVP'; player?: PlayerRef; amount: Expr; reason?: string } // permanent "tokens" VP
@@ -301,7 +305,9 @@ export type Effect =
   | { op: 'grantTradeRate'; player?: PlayerRef; resource: ResourceRef | 'any'; ratio: number; until?: 'endOfTurn' | 'forever' }
 
   /* --- turn flow --- */
-  | { op: 'rollDice' }
+  /** Roll the dice. `values` fixes the numeric dice (one Expr per die, in order; a missing entry is
+   *  rolled; results are clamped to 1..sides), e.g. C&K Alchemist. Event dice always roll randomly. */
+  | { op: 'rollDice'; values?: Expr[] }
   | { op: 'extraBuildPhase' }      // 5-6 player special building phase
   | { op: 'endTurn' }
   | { op: 'win'; player?: PlayerRef };
@@ -352,7 +358,7 @@ export const EVENT_PAYLOAD_VARS: Record<BuiltinEvent, string[]> = {
   playerProduction: ['player', 'amount', 'roll', 'hex'],
   tokenMoved: ['token', 'at', 'from', 'player'],               // `from` = previous location (or null)
   hexRevealed: ['at', 'terrain', 'player'],
-  cardDrawn: ['card', 'deck', 'player'],
+  cardDrawn: ['card', 'deck', 'player'],                       // also fired by giveCard / takeCard
   cardPlayed: ['card', 'deck', 'player'],
   resourceGained: ['player', 'resource', 'amount'],
   resourceLost: ['player', 'resource', 'amount'],
