@@ -1,7 +1,7 @@
 import { useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react';
 import type { ModDef } from '../../engine/schema';
 import type { RoomView } from '../../net/useRoom';
-import { builtinMods } from '../../content/builtins';
+import { addWithDependencies, builtinMods, removeWithDependents } from '../../content/builtins';
 import { listMods, MOD_LIBRARY_KEY, parseModJson, saveMod, subscribeModLibrary, type LibraryEntry } from '../shared/modLibrary';
 
 // listMods() returns a new array each call; cache by raw storage string for useSyncExternalStore.
@@ -27,9 +27,12 @@ export function ModsPanel({ room }: { room: RoomView }) {
 
   const addMod = (mod: ModDef) => {
     if (mod.meta.id === 'base') { setMsg('The base game is always included.'); return; }
+    // Mods this one builds on (e.g. a Seafarers scenario needs Seafarers) come along automatically.
     const without = mods.filter((m) => m.meta.id !== mod.meta.id);
-    setMods([...without, mod]);
-    setMsg(inRoom.has(mod.meta.id) ? `Replaced ${mod.meta.name}` : `Added ${mod.meta.name}`);
+    const next = addWithDependencies(without, mod, [...builtinMods, ...library.map((e) => e.mod)]);
+    setMods(next);
+    const extra = next.filter((m) => m.meta.id !== mod.meta.id && !inRoom.has(m.meta.id)).map((m) => m.meta.name);
+    setMsg(`${inRoom.has(mod.meta.id) ? 'Replaced' : 'Added'} ${mod.meta.name}${extra.length ? ` (with ${extra.join(', ')})` : ''}`);
   };
 
   const move = (i: number, d: -1 | 1) => {
@@ -89,7 +92,7 @@ export function ModsPanel({ room }: { room: RoomView }) {
                 <>
                   <button className="btn ghost small" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">↑</button>
                   <button className="btn ghost small" disabled={i === mods.length - 1} onClick={() => move(i, 1)} aria-label="Move down">↓</button>
-                  <button className="btn ghost small danger" onClick={() => setMods(mods.filter((x) => x.meta.id !== m.meta.id))} aria-label="Remove">✕</button>
+                  <button className="btn ghost small danger" onClick={() => setMods(removeWithDependents(mods, m.meta.id))} aria-label="Remove">✕</button>
                 </>
               )}
             </div>
