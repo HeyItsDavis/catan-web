@@ -698,6 +698,15 @@ export const CONDITIONS: ConditionCatalog = {
     params: [at(), { name: 'token', label: 'Token', kind: 'tokenId', default: '' }],
     make: () => ({ hasToken: { at: 'at', token: '' } }),
   },
+  isAdjacent: {
+    key: 'isAdjacent', label: 'Locations touch', category: 'Board', shape: 'tuple',
+    description: 'True when two chosen locations are next to each other (e.g. a road touching the settlement just placed).',
+    params: [
+      { name: 'a', label: 'Location', kind: 'locationVar', default: 'at' },
+      { name: 'b', label: 'Touches', kind: 'locationVar', default: 'lastPlaced' },
+    ],
+    make: () => ({ isAdjacent: ['at', 'lastPlaced'] }),
+  },
   hexNumberIn: {
     key: 'hexNumberIn', label: 'Hex number is', category: 'Board', shape: 'object',
     description: 'True when the hex’s number token is one of these numbers.',
