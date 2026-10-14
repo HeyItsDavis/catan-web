@@ -7,20 +7,28 @@ import { byId, humanize } from './util';
 
 /* --------------------------------- stats ---------------------------------- */
 
-export function statInfo(def: GameDefinition, key: string): { label: string; icon?: string; hidden: boolean } {
+export function statInfo(def: GameDefinition, key: string): { label: string; icon?: string; hidden: boolean; max?: number } {
   const h = def.display?.stats?.find((s) => s.key === key);
-  return { label: h?.label || humanize(key), icon: h?.icon, hidden: !!h?.hidden };
+  return { label: h?.label || humanize(key), icon: h?.icon, hidden: !!h?.hidden, max: h?.max };
 }
 
 /** Visible, non-zero stats of a player with their labels. */
-export function visibleStats(def: GameDefinition, stats: Record<string, number>): { key: string; label: string; icon?: string; value: number }[] {
-  const out: { key: string; label: string; icon?: string; value: number }[] = [];
+export interface StatRow { key: string; label: string; icon?: string; value: number; max?: number }
+
+/** Visible, non-zero stats of a player with their labels (hinted stats first, in hint order). */
+export function visibleStats(def: GameDefinition, stats: Record<string, number>): StatRow[] {
+  const order = new Map((def.display?.stats ?? []).map((h, i) => [h.key, i]));
+  const out: StatRow[] = [];
   for (const [key, value] of Object.entries(stats)) {
     if (!value) continue;
     const i = statInfo(def, key);
-    if (!i.hidden) out.push({ key, label: i.label, icon: i.icon, value });
+    if (i.hidden) continue;
+    const row: StatRow = { key, label: i.label, value };
+    if (i.icon) row.icon = i.icon;
+    if (i.max) row.max = i.max;
+    out.push(row);
   }
-  return out;
+  return out.sort((a, b) => (order.get(a.key) ?? 999) - (order.get(b.key) ?? 999));
 }
 
 /* -------------------------------- globals --------------------------------- */

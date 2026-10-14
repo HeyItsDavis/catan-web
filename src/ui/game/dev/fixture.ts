@@ -50,6 +50,10 @@ export function makeFixtureDef(): GameDefinition {
         placement: { on: 'vertex', where: true }, cost: { wheat: 2, ore: 3 },
       },
       {
+        id: 'wall', name: 'City Wall', icon: 'wall', supply: 3, tags: ['wall'],
+        placement: { on: 'vertex', where: true }, cost: { brick: 2 },
+      },
+      {
         // No icon: drawn as a boat because of the 'ship' tag.
         id: 'ship', name: 'Ship', supply: 15, network: 'roads', tags: ['ship'], pieceActions: ['moveShip'],
         placement: { on: 'edge', where: true }, cost: { wood: 1, sheep: 1 },
@@ -102,7 +106,7 @@ export function makeFixtureDef(): GameDefinition {
     awards: [
       { id: 'longestRoad', name: 'Longest Road', vp: 2, metric: { longestRoad: 'self' }, min: 5, holderKeepsOnTie: T },
       { id: 'largestArmy', name: 'Largest Army', vp: 2, metric: { stat: { key: 'knightsPlayed' } }, min: 3, holderKeepsOnTie: T },
-      { id: 'metropolis', name: 'Science Metropolis', vp: 2, metric: { stat: { key: 'scienceLevel' } }, min: 4, mode: 'keepUntilBeaten' },
+      { id: 'metropolis', name: 'Science Metropolis', vp: 0, metric: { stat: { key: 'scienceLevel' } }, min: 4, mode: 'keepUntilBeaten' },
     ],
     ports: [
       { id: 'generic', resource: 'any', ratio: 3 },
@@ -127,7 +131,7 @@ export function makeFixtureDef(): GameDefinition {
       ],
       stats: [
         { key: 'knightsPlayed', label: 'Knights played', icon: 'knight' },
-        { key: 'scienceLevel', label: 'Science', icon: 'paper' },
+        { key: 'scienceLevel', label: 'Science', icon: 'paper', max: 5 },
         { key: 'internalCounter', hidden: T },
       ],
       eventFaces: [
@@ -288,6 +292,7 @@ export function makeFixtureState(): GameState {
 
   put('settlement', ME, hv(0, 0, 0)); put('road', ME, he(0, 0, 0)); put('road', ME, he(0, 0, 5));
   put('city', ME, hv(-1, 2, 3)); put('road', ME, he(-1, 2, 2));
+  put('wall', ME, hv(-1, 2, 3)); // shares the corner with the city
   put('knight', ME, hv(1, 1, 2), { strength: 2, active: 1 });
   put('knight', ME, hv(0, 0, 3), { strength: 1, active: 0 });
   put('ship', ME, coastEdge(hexes, 0, 2, pieces), {}, { wood: 2, settler: 1 });
@@ -405,7 +410,7 @@ export function fakeRedact(state: GameState, viewer: string, def: GameDefinition
     players: state.players.map((p) => {
       if (p.id === viewer) return p;
       const total = Object.values(p.resources).reduce((a, b) => a + b, 0);
-      return { ...p, resources: { '?': total }, hand: p.hand.map((c) => (pub.has(c.deck) ? c : { ...c, id: 'hidden', card: 'hidden' })) };
+      return { ...p, resources: { '?': total }, hand: p.hand.map((c) => (pub.has(c.deck) ? c : { ...c, card: 'hidden' })) };
     }),
   };
 }

@@ -356,6 +356,9 @@
 .g-deckcount--full { color: var(--g-accent); }
 .g-deckcount--over { color: var(--g-bad); }
 .g-opp-cards { margin-top: 4px; }
+.g-statpips { display: inline-flex; gap: 2px; }
+.g-statpips i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--g-muted); }
+.g-statpips i.on { background: var(--g-accent); border-color: var(--g-accent); }
 .g-opp-cards .g-card { font-size: 11px; padding: 3px 6px; }
 .g-hand { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 6px; }
 .g-hand-res { display: flex; flex-direction: column; align-items: center; gap: 2px; }
@@ -443,6 +446,7 @@
   background: var(--g-panel-2); border: 1px solid var(--g-border); text-align: center;
 }
 .g-choice:hover { border-color: var(--g-accent); }
+.g-choice--card { border-top-width: 4px; }
 
 .g-stepper-list { display: flex; flex-direction: column; gap: 5px; }
 .g-stepper-row { display: flex; align-items: center; gap: 8px; }

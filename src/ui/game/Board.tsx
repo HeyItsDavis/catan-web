@@ -247,8 +247,23 @@ export function Board({ def, state, pick, onPieceTap, selectedPiece }: Props) {
       else if (p.at.startsWith('e:')) e.push(p);
       else h.push(p);
     }
-    return { v, e, h };
-  }, [state.pieces]);
+    // Several pieces on one corner (a city wall under its city): the "main" one (production /
+    // VP, else the newest) is drawn normally, the others as a base ring underneath it.
+    const byLoc = new Map<string, PieceInstance[]>();
+    for (const p of v) byLoc.set(p.at, [...(byLoc.get(p.at) ?? []), p]);
+    const weight = (p: PieceInstance) => {
+      const d = def.pieces.find((x) => x.id === p.type);
+      return (d?.productionMultiplier ?? 0) * 10 + (d?.vp ?? 0);
+    };
+    const vBase: PieceInstance[] = [], vTop: PieceInstance[] = [];
+    for (const list of byLoc.values()) {
+      if (list.length === 1) { vTop.push(list[0]); continue; }
+      let top = list[list.length - 1];
+      for (const p of list) if (weight(p) > weight(top)) top = p;
+      for (const p of list) (p === top ? vTop : vBase).push(p);
+    }
+    return { v: vTop, vBase, e, h };
+  }, [state.pieces, def.pieces]);
 
   const tokensAt = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -313,6 +328,7 @@ export function Board({ def, state, pick, onPieceTap, selectedPiece }: Props) {
   /** Where a piece is drawn (its tap centre). */
   const piecePoint = (p: PieceInstance): Point => {
     const c = locationPoint(p.at);
+    if (piecesByKind.vBase.includes(p)) return { x: c.x - HEX_SIZE * 0.3, y: c.y + HEX_SIZE * 0.22 };
     return p.at.startsWith('h:') ? { x: c.x + HEX_SIZE * 0.42, y: c.y + HEX_SIZE * 0.1 } : c;
   };
 
@@ -556,6 +572,26 @@ export function Board({ def, state, pick, onPieceTap, selectedPiece }: Props) {
                 )}
                 {pieceDecor(p, pd, mid.x, mid.y, S * 0.22)}
                 {ringed(p) && <circle cx={mid.x} cy={mid.y} r={S * 0.28} className={ringClass(p)} />}
+              </g>
+            );
+          })}
+        </g>
+
+        {/* vertex pieces sharing a corner with a main piece: base ring + small badge icon */}
+        <g>
+          {piecesByKind.vBase.map((p) => {
+            const pd = byId(def.pieces, p.type);
+            const c = vertexToPixel(p.at, S);
+            const color = playerColor.get(p.owner) ?? '#aaa';
+            const bx = c.x - S * 0.3, by = c.y + S * 0.22;
+            return (
+              <g key={p.id} className={`${pieceClass(p, pd)} g-piece--base`} onClick={interactive(p) ? pieceClick(p) : undefined} data-piece={p.id}>
+                <title>{pieceSummary(def, state, p)}</title>
+                <circle cx={c.x} cy={c.y} r={S * 0.33} fill="none" stroke="#1d1d22" strokeWidth={S * 0.11} />
+                <circle cx={c.x} cy={c.y} r={S * 0.33} fill="none" stroke={color} strokeWidth={S * 0.07} className="g-base-ring" />
+                {interactive(p) && <circle cx={bx} cy={by} r={hitR(S * 0.14, S * 0.2)} className="g-hit" />}
+                <IconGlyph x={bx} y={by} size={S * 0.24} name={pd?.icon ?? p.type} label={pd?.name} fill={color} />
+                {ringed(p) && <circle cx={bx} cy={by} r={S * 0.17} className={ringClass(p)} />}
               </g>
             );
           })}

@@ -93,6 +93,8 @@ export function DisplayHintsEditor(props: { value: DisplayHints | undefined; onC
                 <TextInput value={st.label} className="me-small" onChange={label => upd({ ...st, label: label || undefined })} />
                 <span>icon</span>
                 <TextInput value={st.icon} className="me-small" onChange={icon => upd({ ...st, icon: icon || undefined })} />
+                <span>max</span>
+                <NumberInput value={st.max} small allowEmpty onChange={max => upd({ ...st, max })} />
                 <Checkbox label="hidden" value={st.hidden} onChange={hidden => upd({ ...st, hidden: hidden || undefined })} />
                 <button type="button" className="me-icon-btn me-danger" onClick={() => set({ stats: stats.filter((_, j) => j !== i) })}>✕</button>
               </div>

@@ -218,7 +218,7 @@ export function GameInfoPanel({ def, state, playerId }: { def: GameDefinition; s
                 <Icon name="trophy" size={14} fill={holder ? '#f1c232' : '#777'} />
                 <span className="g-grow">
                   {a.name}
-                  <span className="g-muted g-small"> +{a.vp} VP{a.min > 0 ? ` · min ${a.min}` : ''}</span>
+                  <span className="g-muted g-small">{' '}{[a.vp ? `+${a.vp} VP` : '', a.min > 0 ? `min ${a.min}` : ''].filter(Boolean).join(' · ')}</span>
                   {keep && <span className="g-tag g-tag--sm" title="Once won, it is kept until another player strictly beats the holder">kept until beaten</span>}
                 </span>
                 {holder ? <PlayerName p={holder} /> : <span className="g-muted g-small">unclaimed</span>}

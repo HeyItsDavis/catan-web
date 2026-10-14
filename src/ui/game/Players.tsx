@@ -22,7 +22,14 @@ function StatTags({ def, stats }: { def: GameDefinition; stats: Record<string, n
     <>
       {visibleStats(def, stats).map((st) => (
         <span key={st.key} className="g-tag" data-stat={st.key}>
-          {st.icon && <Icon name={st.icon} label={st.label} size={12} fill="#ccc" />} {st.label}: {st.value}
+          {st.icon && <Icon name={st.icon} label={st.label} size={12} fill="#ccc" />} {st.label}:{' '}
+          {st.max ? (
+            <span className="g-statpips" title={`${st.value} / ${st.max}`}>
+              {Array.from({ length: st.max }, (_, i) => <i key={i} className={i < st.value ? 'on' : ''} />)}
+            </span>
+          ) : (
+            st.value
+          )}
         </span>
       ))}
     </>
@@ -198,7 +205,7 @@ export function SelfPanel({
       {(awards.length > 0 || visibleStats(def, me.stats).length > 0) && (
         <div className="g-tags">
           {awards.map((a) => (
-            <span key={a.id} className="g-tag g-tag--award" title={`${a.name} (+${a.vp} VP)`}>
+            <span key={a.id} className="g-tag g-tag--award" title={a.vp ? `${a.name} (+${a.vp} VP)` : a.name}>
               <Icon name="trophy" size={12} fill="#f1c232" /> {a.name}
             </span>
           ))}
@@ -273,7 +280,7 @@ export function OpponentsPanel({ def, state, playerId }: { def: GameDefinition; 
             {(awards.length > 0 || stats.length > 0) && (
               <div className="g-tags">
                 {awards.map((a) => (
-                  <span key={a.id} className="g-tag g-tag--award" title={`+${a.vp} VP`}>
+                  <span key={a.id} className="g-tag g-tag--award" title={a.vp ? `+${a.vp} VP` : a.name}>
                     <Icon name="trophy" size={12} fill="#f1c232" /> {a.name}
                   </span>
                 ))}

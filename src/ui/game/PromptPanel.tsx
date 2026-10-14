@@ -136,12 +136,24 @@ export function PromptPanel({ def, state, playerId, prompt, send }: Props) {
     case 'card':
       body = (
         <div className="g-choice-grid">
-          {prompt.options.map((cid) => {
-            const inst = me?.hand.find((c) => c.id === cid) ?? me?.played.find((c) => c.id === cid);
-            const card = byId(def.cards, inst?.card ?? cid);
+          {prompt.options.map((cid, i) => {
+            // Options are card instance ids, possibly from ANOTHER player's hand (take a card).
+            const owner = state.players.find((p) => p.hand.some((c) => c.id === cid) || p.played.some((c) => c.id === cid));
+            const inst = owner?.hand.find((c) => c.id === cid) ?? owner?.played.find((c) => c.id === cid);
+            const card = byId(def.cards, inst?.card) ?? (inst ? undefined : byId(def.cards, cid));
+            const deck = byId(def.decks, inst?.deck);
+            const name = card?.name ?? prompt.optionLabels?.[i] ?? 'Hidden card';
             return (
-              <button key={cid} type="button" className="g-choice" onClick={() => respond(cid)} title={card?.description}>
-                <b>{card?.name ?? cid}</b>
+              <button
+                key={cid}
+                type="button"
+                className="g-choice g-choice--card"
+                style={deck?.color ? { borderTopColor: deck.color } : undefined}
+                onClick={() => respond(cid)}
+                title={[card?.description, deck?.name].filter(Boolean).join(' — ')}
+              >
+                <b>{name}</b>
+                {owner && owner.id !== playerId && <span className="g-muted g-small">from {owner.name}</span>}
                 {card?.description && <span className="g-muted g-small">{card.description}</span>}
               </button>
             );

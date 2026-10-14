@@ -49,6 +49,11 @@ describe('board: piece state, cargo, seafarers visuals', () => {
     expect(html).toContain('of your choice');
   });
 
+  it('draws a second piece on the same corner as a base ring under the main piece', () => {
+    expect(html).toContain('g-piece--base');
+    expect(html).toMatch(/City Wall — You/);
+  });
+
   it('pieces are tappable (menu) with hit targets', () => {
     expect(html).toContain('g-piece--tap');
     expect(html).toContain('g-hit');
@@ -84,6 +89,8 @@ describe('panels: hand, decks, globals, awards, dice', () => {
     expect(html).toContain('kept until beaten');
     expect(html).toContain('Science Metropolis');
     expect(html).toContain('Knights played: 1');
+    expect(html).toContain('g-statpips');
+    expect(html).not.toContain('+0 VP');
   });
 
   it('labels and colours event-die faces', () => {
@@ -117,6 +124,16 @@ describe('prompts', () => {
     expect(html).toContain('g-chosen');
     expect(html).toContain('Done (2)');
     expect(html).not.toContain('(3/4)');
+  });
+
+  it("card prompts can offer another player's cards (names from optionLabels when hidden)", () => {
+    const s = idle();
+    const alice = s.players.find((p) => p.id === 'p2')!;
+    s.prompts = [{ id: 'tk', player: ME, kind: 'card', label: 'Choose a card to take from Alice', options: alice.hand.map((c) => c.id), optionLabels: ['Monopoly', 'Road Building', 'Defender'] }];
+    const html = render(s);
+    expect(html).toContain('>from Alice<');
+    expect(html).toContain('Road Building');
+    expect(html).toContain('Defender');
   });
 
   it('multi-select player prompt lists already chosen players', () => {

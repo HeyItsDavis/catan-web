@@ -598,8 +598,9 @@ export interface DisplayHints {
    *  track; `hidden` keeps an internal counter out of the info panel. Unlisted globals are shown
    *  with a humanized key. */
   globals?: { key: string; label?: string; max?: number; icon?: string; color?: string; hidden?: boolean }[];
-  /** Labels for per-player stats (PlayerState.stats). `hidden` hides internal counters. */
-  stats?: { key: string; label?: string; icon?: string; hidden?: boolean }[];
+  /** Labels for per-player stats (PlayerState.stats). `hidden` hides internal counters; `max` shows
+   *  the value as a pip track (e.g. a city-improvement level 0..5). */
+  stats?: { key: string; label?: string; icon?: string; hidden?: boolean; max?: number }[];
   /** Label / colour / icon for event-die faces (DiceDef.eventDice faces). */
   eventFaces?: { face: string; label?: string; color?: string; icon?: string }[];
 }
