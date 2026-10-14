@@ -4,7 +4,7 @@
  * Scalar sections (dice, setup, victoryPoints, discardLimit) are replaced when present;
  * `trade` is merged field by field (bankRates merged by kind).
  */
-import type { CollectionKey, GameDefinition, ModDef } from './schema';
+import type { CollectionKey, DisplayHints, GameDefinition, ModDef } from './schema';
 import { validateDefinition, type Problem } from './validate';
 
 export class ModValidationError extends Error {
@@ -58,6 +58,29 @@ export function emptyDefinition(): GameDefinition {
   };
 }
 
+/** Merge UI display hints: each list is merged by its key (same key = replace, new key = add). */
+export function mergeDisplay(into: DisplayHints | undefined, add: DisplayHints | undefined): DisplayHints | undefined {
+  if (!add) return into;
+  const out: DisplayHints = { ...(into ?? {}) };
+  const merge = <T, K extends keyof T>(a: T[] | undefined, b: T[] | undefined, key: K): T[] | undefined => {
+    if (!b) return a;
+    const list = [...(a ?? [])];
+    for (const item of b) {
+      if (!item || typeof item !== 'object') continue;
+      const i = list.findIndex((x) => x[key] === item[key]);
+      if (i >= 0) list[i] = structuredClone(item); else list.push(structuredClone(item));
+    }
+    return list;
+  };
+  const g = merge(out.globals, add.globals, 'key');
+  const st = merge(out.stats, add.stats, 'key');
+  const f = merge(out.eventFaces, add.eventFaces, 'face');
+  if (g) out.globals = g;
+  if (st) out.stats = st;
+  if (f) out.eventFaces = f;
+  return out;
+}
+
 /** Merge already-sorted mods without validation. */
 export function mergeMods(sorted: ModDef[]): GameDefinition {
   const def = emptyDefinition();
@@ -85,6 +108,7 @@ export function mergeMods(sorted: ModDef[]): GameDefinition {
     }
     if (mod.victoryPoints !== undefined) def.victoryPoints = mod.victoryPoints;
     if (mod.discardLimit !== undefined) def.discardLimit = mod.discardLimit;
+    if (mod.display) def.display = mergeDisplay(def.display, mod.display);
   }
   return def;
 }

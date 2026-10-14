@@ -12,6 +12,8 @@ interface Props {
   moves: AvailableMoves;
   send: (c: Command) => void;
   onTrade: () => void;
+  /** Start a piece action that several pieces could perform (player then picks one on the board). */
+  onPieceAction?: (actionId: string) => void;
   hasOwnPrompt: boolean;
 }
 
@@ -27,7 +29,7 @@ interface Btn {
   onClick: () => void;
 }
 
-export function ActionBar({ def, state, playerId, moves, send, onTrade, hasOwnPrompt }: Props) {
+export function ActionBar({ def, state, playerId, moves, send, onTrade, onPieceAction, hasOwnPrompt }: Props) {
   const myTurn = state.turnOrder[state.currentPlayerIndex] === playerId;
   const over = state.phase === 'gameOver' || !!state.winner;
   const me = state.players.find((p) => p.id === playerId);
@@ -92,20 +94,55 @@ export function ActionBar({ def, state, playerId, moves, send, onTrade, hasOwnPr
     });
   }
 
-  /* custom actions (recipes) */
+  /* custom actions (recipes). Piece actions: one button per action; with several eligible
+     pieces the player then picks one on the board (onPieceAction). */
+  const pieceActs = new Map<string, { action: ActionDef; pieces: string[]; enabled: string[] }>();
   for (const a of moves.actions) {
-    const piece = a.pieceId ? state.pieces.find((p) => p.id === a.pieceId) : undefined;
-    const pieceName = piece ? byId(def.pieces, piece.type)?.name ?? piece.type : '';
+    if (a.pieceId) {
+      const e = pieceActs.get(a.action.id) ?? { action: a.action, pieces: [], enabled: [] };
+      e.pieces.push(a.pieceId);
+      if (a.enabled) e.enabled.push(a.pieceId);
+      if (!pieceActs.has(a.action.id)) {
+        pieceActs.set(a.action.id, e);
+        // reserve the slot in its group now so order follows the definition
+        add(a.action.group ?? 'special', { key: `paction:${a.action.id}`, label: '', disabled: null, onClick: () => {} });
+      }
+      continue;
+    }
     add(a.action.group ?? 'special', {
-      key: `action:${a.action.id}:${a.pieceId ?? ''}`,
-      label: pieceName ? `${a.action.name} (${pieceName})` : a.action.name,
+      key: `action:${a.action.id}`,
+      label: a.action.name,
       icon: a.action.icon,
       iconFill: myColor,
       cost: a.action.cost,
       title: a.action.description,
       disabled: baseBlock() ?? (a.enabled ? null : 'Not available right now'),
-      onClick: () => send({ type: 'doAction', action: a.action.id, ...(a.pieceId ? { pieceId: a.pieceId } : {}) }),
+      onClick: () => send({ type: 'doAction', action: a.action.id }),
     });
+  }
+  for (const [id, e] of pieceActs) {
+    const g = e.action.group ?? 'special';
+    const names = [...new Set(e.pieces.map((pid) => {
+      const t = state.pieces.find((p) => p.id === pid)?.type;
+      return byId(def.pieces, t)?.name ?? t ?? '';
+    }))].filter(Boolean);
+    const btn: Btn = {
+      key: `paction:${id}`,
+      label: e.action.name,
+      icon: e.action.icon,
+      iconFill: myColor,
+      cost: e.action.cost,
+      badge: e.pieces.length > 1 ? `${e.enabled.length}/${e.pieces.length}` : undefined,
+      title: [e.action.description, names.length ? `On: ${names.join(', ')}` : '', e.enabled.length > 1 ? 'Then pick a piece on the board' : '']
+        .filter(Boolean).join('\n'),
+      disabled: baseBlock() ?? (e.enabled.length ? null : 'Not available right now'),
+      onClick: () => {
+        if (e.enabled.length === 1) send({ type: 'doAction', action: id, pieceId: e.enabled[0] });
+        else if (onPieceAction) onPieceAction(id);
+        else send({ type: 'doAction', action: id, pieceId: e.enabled[0] });
+      },
+    };
+    groups.set(g, groups.get(g)!.map((b) => (b.key === btn.key ? btn : b)));
   }
 
   const tradeReason =

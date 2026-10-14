@@ -147,6 +147,12 @@ checks are *is occupied*, *is water*, *is coastal*, *connects to network*, *dist
   abstract goods such as a `settler` or `marble`. *Cargo carried* (`cargoCount`) reads them.
   Cargo moves with the piece. If the piece leaves the board, its resource cargo goes back to
   the bank.
+* `display` (looks only): how the board draws the piece's state and cargo. `stateBadges` lists
+  state keys with a `style`: `pips` (one dot per point, up to `max`, e.g. knight strength),
+  `number` (a small numbered badge) or `toggle` (the piece is drawn dimmed while the value is
+  0, e.g. an inactive knight). Without it, non-zero state shows as numbered badges. Cargo is
+  drawn as chips unless `showCargo: false`. Edge pieces with icon `ship` or tag `ship` are drawn
+  as boats. Tapping a piece shows its state and cargo, and for your own pieces its actions.
 
 **Piece queries** pick a set of pieces. You can filter by owner, type, tag, *near* a spot,
 *touching terrain*, *with state* (for example `{active: 1}`), *on the same island as* a spot,
@@ -303,6 +309,21 @@ An award has a per-player `metric` (a number; "you" is the player being scored) 
 By default (`mode: 'highest'`) it goes to the strict leader. `holderKeepsOnTie` lets the
 holder keep it on a tie. With `mode: 'keepUntilBeaten'`, the holder keeps it until someone
 **strictly exceeds** the holder's own score, even if the holder's score later drops.
+
+### Game screen display hints
+
+`display` at the top of a mod (Rules tab → *Game screen display*) only changes looks, and is
+merged by key with what the mod extends:
+```json
+"display": {
+  "globals": [{ "key": "barbarians", "label": "Barbarian ship", "max": 7, "icon": "ship", "color": "#c0392b" }],
+  "stats": [{ "key": "knightsPlayed", "label": "Knights played", "icon": "knight" }, { "key": "tmp", "hidden": true }],
+  "eventFaces": [{ "face": "barbarian", "label": "Barbarians", "color": "#2b2b33", "icon": "ship" }]
+}
+```
+Globals with a `max` get a track in the info panel; unlisted globals show with their key.
+Resources are grouped by `kind` in the hand, cards by deck (with `handLimit` warnings), and
+cards of `public` decks are shown face up to everyone.
 
 ---
 

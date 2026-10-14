@@ -99,10 +99,11 @@ describe('chooseMany', () => {
       { op: 'setStat', key: 'n', value: { var: 'n' } },
     ] });
     let s2 = run(def, s);
-    expect(s2.prompts[0]).toMatchObject({ kind: 'player', options: ['p2', 'p3'] });
+    expect(s2.prompts[0]).toMatchObject({ kind: 'player', options: ['p2', 'p3'], progress: { picked: 0, max: 2, min: 1, chosen: [] } });
     expect(s2.prompts[0].optional).toBeUndefined();
+    expect(s2.prompts[0].pieceId).toBeUndefined();
     s2 = respond(def, s2, 'p3');
-    expect(s2.prompts[0]).toMatchObject({ options: ['p2'], optional: true });
+    expect(s2.prompts[0]).toMatchObject({ options: ['p2'], optional: true, progress: { picked: 1, max: 2, min: 1, chosen: ['p3'] } });
     s2 = respond(def, s2, null);
     expect(P(s2, 'p3').stats.picked).toBe(1);
     expect(P(s2, 'p2').stats.picked).toBeUndefined();
@@ -190,6 +191,8 @@ describe('movePiece: range, path, chooser, anywhere', () => {
     let s2 = run(def, s);
     s2 = respond(def, s2, C[0]);
     expect([...s2.prompts[0].options].sort()).toEqual([C[1], C[2]].sort());
+    // movement prompts name the moving piece instance (UI shows it + its reachable spots)
+    expect(s2.prompts[0].pieceId).toBe(s2.pieces.find((p) => p.type === 'wagon')!.id);
     s2 = respond(def, s2, C[2]);
     expect(s2.pieces.find((p) => p.type === 'wagon')!.at).toBe(C[2]);
     expect(P(s2, 'p1').stats.st).toBe(2);

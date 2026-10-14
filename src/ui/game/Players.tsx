@@ -4,7 +4,37 @@ import type { CardInstance, Command, GameDefinition, GameState, PlayerState } fr
 import { Icon } from '../shared/icons';
 import { useEngine } from './engineContext';
 import { PlayerDot, ResChip } from './chips';
-import { byId, HIDDEN_KEY, humanize, isHiddenCard, isRedacted, resourceTotal } from './util';
+import { pluralKind, visibleStats } from './display';
+import { byId, HIDDEN_KEY, isHiddenCard, isRedacted, resourceTotal } from './util';
+
+/** Hand cards grouped by deck (definition order, unknown decks last). */
+function cardsByDeck(def: GameDefinition, cards: CardInstance[]): { deck: string; cards: CardInstance[] }[] {
+  const order = new Map(def.decks.map((d, i) => [d.id, i]));
+  const m = new Map<string, CardInstance[]>();
+  for (const c of cards) m.set(c.deck, [...(m.get(c.deck) ?? []), c]);
+  return [...m.entries()]
+    .sort(([a], [b]) => (order.get(a) ?? 99) - (order.get(b) ?? 99))
+    .map(([deck, cs]) => ({ deck, cards: cs }));
+}
+
+function StatTags({ def, stats }: { def: GameDefinition; stats: Record<string, number> }) {
+  return (
+    <>
+      {visibleStats(def, stats).map((st) => (
+        <span key={st.key} className="g-tag" data-stat={st.key}>
+          {st.icon && <Icon name={st.icon} label={st.label} size={12} fill="#ccc" />} {st.label}:{' '}
+          {st.max ? (
+            <span className="g-statpips" title={`${st.value} / ${st.max}`}>
+              {Array.from({ length: st.max }, (_, i) => <i key={i} className={i < st.value ? 'on' : ''} />)}
+            </span>
+          ) : (
+            st.value
+          )}
+        </span>
+      ))}
+    </>
+  );
+}
 
 function awardsOf(def: GameDefinition, state: GameState, pid: string) {
   return Object.entries(state.awards)
@@ -77,6 +107,14 @@ export function SelfPanel({
   const vpTotal = engine.computeVP(def, state, me.id, true);
   const awards = awardsOf(def, state, me.id);
   const redacted = isRedacted(me);
+  const kinds: { kind: string; list: GameDefinition['resources'] }[] = [];
+  for (const r of def.resources) {
+    const g = kinds.find((k) => k.kind === r.kind);
+    if (g) g.list.push(r); else kinds.push({ kind: r.kind, list: [r] });
+  }
+  const handTotal = resourceTotal(me);
+  const discardLimit = state.settings.discardLimit || def.discardLimit;
+  const deckGroups = cardsByDeck(def, me.hand);
 
   return (
     <section className="g-panel g-self" aria-label="Your hand">
@@ -93,38 +131,65 @@ export function SelfPanel({
         </span>
       </header>
 
-      <div className="g-hand" aria-label="Resources">
-        {redacted ? (
+      {redacted ? (
+        <div className="g-hand" aria-label="Resources">
           <span className="g-muted">{me.resources[HIDDEN_KEY]} cards</span>
-        ) : (
-          def.resources.map((r) => {
-            const n = me.resources[r.id] ?? 0;
-            return (
-              <div key={r.id} className={`g-hand-res${n === 0 ? ' g-hand-res--empty' : ''}`} title={r.name}>
-                <ResChip def={def} id={r.id} amount={n} />
-                <span className="g-hand-res-name">{r.name}</span>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {me.hand.length > 0 && (
-        <div className="g-subsec">
-          <h4>Cards</h4>
-          <div className="g-cards">
-            {me.hand.map((c) => (
-              <CardTile
-                key={c.id}
-                def={def}
-                inst={c}
-                playable={playable.has(c.id)}
-                onPlay={() => send({ type: 'playCard', cardInstance: c.id })}
-              />
-            ))}
+        </div>
+      ) : (
+        kinds.map(({ kind, list }) => (
+          <div key={kind} className="g-hand-group" data-kind={kind}>
+            {kinds.length > 1 && <h4>{pluralKind(kind)}</h4>}
+            <div className="g-hand" aria-label={pluralKind(kind)}>
+              {list.map((r) => {
+                const n = me.resources[r.id] ?? 0;
+                return (
+                  <div key={r.id} className={`g-hand-res${n === 0 ? ' g-hand-res--empty' : ''}`} title={r.name}>
+                    <ResChip def={def} id={r.id} amount={n} />
+                    <span className="g-hand-res-name">{r.name}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
+        ))
+      )}
+      {!redacted && discardLimit > 0 && handTotal > discardLimit && (
+        <div className="g-warn" role="note">
+          {handTotal} cards — more than {discardLimit}: you would discard on a 7
         </div>
       )}
+
+      {deckGroups.map(({ deck, cards }) => {
+        const dd = byId(def.decks, deck);
+        const limit = dd?.handLimit;
+        const over = limit !== undefined && cards.length > limit;
+        const full = limit !== undefined && cards.length === limit;
+        return (
+          <div key={deck} className="g-subsec g-deckgroup" style={{ ['--deck' as string]: deckColor(def, deck) }} data-deck={deck}>
+            <h4>
+              <span className="g-deckdot" />
+              {dd?.name ?? (deckGroups.length > 1 ? deck : 'Cards')}
+              <span className={`g-deckcount${over ? ' g-deckcount--over' : full ? ' g-deckcount--full' : ''}`}>
+                {cards.length}{limit !== undefined ? `/${limit}` : ''}
+              </span>
+              {dd?.public && <span className="g-tag g-tag--sm" title="Everyone can see these cards">public</span>}
+            </h4>
+            {over && <div className="g-warn g-warn--bad" role="alert">Over the hand limit of {limit} — you must discard down</div>}
+            {full && <div className="g-warn" role="note">Hand limit reached ({limit})</div>}
+            <div className="g-cards">
+              {cards.map((c) => (
+                <CardTile
+                  key={c.id}
+                  def={def}
+                  inst={c}
+                  playable={playable.has(c.id)}
+                  onPlay={() => send({ type: 'playCard', cardInstance: c.id })}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
 
       {me.played.length > 0 && (
         <div className="g-subsec">
@@ -137,20 +202,14 @@ export function SelfPanel({
         </div>
       )}
 
-      {(awards.length > 0 || Object.keys(me.stats).length > 0) && (
+      {(awards.length > 0 || visibleStats(def, me.stats).length > 0) && (
         <div className="g-tags">
           {awards.map((a) => (
-            <span key={a.id} className="g-tag g-tag--award" title={`${a.name} (+${a.vp} VP)`}>
+            <span key={a.id} className="g-tag g-tag--award" title={a.vp ? `${a.name} (+${a.vp} VP)` : a.name}>
               <Icon name="trophy" size={12} fill="#f1c232" /> {a.name}
             </span>
           ))}
-          {Object.entries(me.stats)
-            .filter(([, v]) => v)
-            .map(([k, v]) => (
-              <span key={k} className="g-tag">
-                {humanize(k)}: {v}
-              </span>
-            ))}
+          <StatTags def={def} stats={me.stats} />
         </div>
       )}
     </section>
@@ -171,8 +230,9 @@ export function OpponentsPanel({ def, state, playerId }: { def: GameDefinition; 
     <section className="g-panel g-opps" aria-label="Opponents">
       {others.map((p) => {
         const awards = awardsOf(def, state, p.id);
-        const stats = Object.entries(p.stats).filter(([, v]) => v);
-        const hiddenCards = p.hand.length;
+        const stats = visibleStats(def, p.stats);
+        const faceUp = p.hand.filter((c) => !isHiddenCard(c));
+        const hiddenCards = p.hand.length - faceUp.length;
         const isTurn = p.id === current;
         const prompted = state.prompts.some((x) => x.player === p.id);
         return (
@@ -210,18 +270,21 @@ export function OpponentsPanel({ def, state, playerId }: { def: GameDefinition; 
                   ))}
               </div>
             )}
+            {faceUp.length > 0 && (
+              <div className="g-cards g-opp-cards" aria-label="Face-up cards">
+                {faceUp.map((c) => (
+                  <CardTile key={c.id} def={def} inst={c} />
+                ))}
+              </div>
+            )}
             {(awards.length > 0 || stats.length > 0) && (
               <div className="g-tags">
                 {awards.map((a) => (
-                  <span key={a.id} className="g-tag g-tag--award" title={`+${a.vp} VP`}>
+                  <span key={a.id} className="g-tag g-tag--award" title={a.vp ? `+${a.vp} VP` : a.name}>
                     <Icon name="trophy" size={12} fill="#f1c232" /> {a.name}
                   </span>
                 ))}
-                {stats.map(([k, v]) => (
-                  <span key={k} className="g-tag">
-                    {humanize(k)}: {v}
-                  </span>
-                ))}
+                <StatTags def={def} stats={p.stats} />
               </div>
             )}
           </div>

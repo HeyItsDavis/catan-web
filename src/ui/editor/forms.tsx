@@ -8,6 +8,7 @@ import { formatPath, slugify, uniqueId, type Path } from '../../editor/paths';
 import { actionScope, atScope, cardScope, eventScope, setupScope } from '../../editor/vars';
 import { ConditionField, EffectsField, EventPicker, ExprEditor, ResourceMapEditor } from './blocks';
 import { useEditor } from './context';
+import { PieceDisplayEditor } from './display';
 import {
   Checkbox, ColorInput, Field, ListInput, MultiRef, NumberInput, NumberMap, RefSelect, Section, Select, SuggestInput, TextArea, TextInput,
 } from './fields';
@@ -194,6 +195,9 @@ export function PieceForm(props: FormProps<PieceDef>) {
         <Field label="Actions on this piece" path={[...path, 'pieceActions']} wide>
           <MultiRef collection="actions" value={v.pieceActions} onChange={x => set('pieceActions', x.length ? x : undefined)} />
         </Field>
+      </Section>
+      <Section title="On the board" path={[...path, 'display']} hint="How the game screen draws this piece's state and cargo (looks only).">
+        <PieceDisplayEditor value={v.display} onChange={d => set('display', d)} path={[...path, 'display']} stateKeys={Object.keys(v.initialState ?? {})} />
       </Section>
       <Section title="Piece triggers" path={[...path, 'triggers']} hint="Rules that only apply while this piece type exists.">
         <TriggerList value={v.triggers ?? []} onChange={t => set('triggers', t.length ? t : undefined)} path={[...path, 'triggers']} />

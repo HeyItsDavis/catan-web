@@ -183,6 +183,8 @@ function raise(ctx: Ctx, th: Thread, p: Omit<Prompt, 'id'>, pending: Distributiv
   if (prompt.piece === undefined) delete prompt.piece;
   if (prompt.amount === undefined) delete prompt.amount;
   if (prompt.optional === undefined) delete prompt.optional;
+  if (prompt.pieceId === undefined) delete prompt.pieceId;
+  if (prompt.progress === undefined) delete prompt.progress;
   ctx.s.prompts.push(prompt);
   th.pending = { ...pending, prompt: id } as Pending;
 }
@@ -692,7 +694,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
         const pv = tmpVar(ctx);
         env.vars[pv] = pc.id;
         const v = tmpVar(ctx);
-        raise(ctx, th, { player: who, kind: 'location', label: eff.to?.label ?? 'Move to', options: [...dests.keys()], piece: pc.type },
+        raise(ctx, th, { player: who, kind: 'location', label: eff.to?.label ?? 'Move to', options: [...dests.keys()], piece: pc.type, pieceId: pc.id },
           { k: 'bind', sc, var: v, then: [{ ...eff, from: { ...eff.from, at: pv }, to: { ...eff.to, at: v }, $dist: Object.fromEntries(dests) }] });
         return;
       }
@@ -961,6 +963,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       raise(ctx, th, {
         player: who, kind, label: `${base.label ?? `Choose a ${base.of}`} (${picked.length + 1}/${eff.n})`, options: opts, optionLabels,
         optional: picked.length >= eff.m ? true : undefined,
+        progress: { picked: picked.length, max: eff.n, min: eff.m, chosen: [...picked] },
       }, { k: 'bind', sc, var: v, always: true, then: [{ ...eff, picked, pickVar: v }] });
       return;
     }
