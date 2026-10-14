@@ -72,7 +72,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   if (!isObj(raw) || typeof raw.t !== 'string') return null;
   switch (raw.t) {
     case 'welcome': case 'error': case 'lobby': case 'game:state': case 'game:rejected':
-    case 'chat': case 'pong': case 'kicked': case 'timer':
+    case 'chat': case 'pong': case 'kicked': case 'timer': case 'replaced':
       return raw as ServerMessage;
     default: return null;
   }

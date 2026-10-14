@@ -76,6 +76,32 @@ describe('HostRoom + RoomClient over memory transport', () => {
     expect(ann.getSnapshot().game!.currentPlayerIndex).toBe(1);
   });
 
+  it('a second tab takes the seat; the first stops instead of fighting back', async () => {
+    const { net, host } = setup();
+    const tab1 = client(() => net.connect('ABCDEF'), 'ann', 'Ann');
+    await flush();
+    expect(tab1.getSnapshot().status).toBe('connected');
+    const tab2 = client(() => net.connect('ABCDEF'), 'ann', 'Ann');
+    await flush();
+    await new Promise((r) => setTimeout(r, 80));
+    await flush();
+    expect(tab2.getSnapshot().status).toBe('connected');
+    expect(tab1.getSnapshot().status).toBe('failed');
+    expect(tab1.getSnapshot().error?.message).toMatch(/another tab/);
+    // No reconnect storm: tab2 keeps the seat.
+    await new Promise((r) => setTimeout(r, 50));
+    await flush();
+    expect(tab2.getSnapshot().status).toBe('connected');
+    expect(host.getLobby().players.filter((p) => p.id === 'ann')).toHaveLength(1);
+    // The user can take the seat back explicitly.
+    tab1.retryNow();
+    await flush();
+    await new Promise((r) => setTimeout(r, 80));
+    await flush();
+    expect(tab1.getSnapshot().status).toBe('connected');
+    expect(tab2.getSnapshot().status).toBe('failed');
+  });
+
   it('protects the host seat and other seats from impersonation', async () => {
     const { net } = setup();
     const fake = client(() => net.connect('ABCDEF'), 'host', 'Evil');

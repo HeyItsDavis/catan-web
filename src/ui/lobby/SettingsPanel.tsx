@@ -21,7 +21,9 @@ export function SettingsPanel({ room }: { room: RoomView }) {
         ) : (
           <select value={s.mapId} onChange={(e) => set('mapId', e.target.value)}>
             {maps.map((m) => (
-              <option key={m.id} value={m.id}>{m.name} ({m.minPlayers}–{m.maxPlayers} players)</option>
+              <option key={m.id} value={m.id} title={`${m.minPlayers}–${m.maxPlayers} players`}>
+                {/player/i.test(m.name) ? m.name : `${m.name} (${m.minPlayers}–${m.maxPlayers} players)`}
+              </option>
             ))}
           </select>
         )}

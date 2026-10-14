@@ -131,12 +131,14 @@ function ConnectionBanner({ room }: { room: RoomView }) {
 function Toast({ room }: { room: RoomView }) {
   const err = room.snapshot.error;
   const { clearError } = room;
+  const connected = room.snapshot.status === 'connected';
   useEffect(() => {
-    if (!err) return;
+    // Only auto-dismiss toasts; while disconnected the error is the banner's explanation.
+    if (!err || !connected) return;
     const id = setTimeout(clearError, 4000);
     return () => clearTimeout(id);
-  }, [err, clearError]);
-  if (!err || room.snapshot.status !== 'connected') return null;
+  }, [err, clearError, connected]);
+  if (!err || !connected) return null;
   return (
     <div className="toast" role="alert" onClick={clearError}>
       {err.message}

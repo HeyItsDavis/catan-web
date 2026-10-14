@@ -40,4 +40,7 @@ export type ServerMessage =
   /** (additive) You were removed by the host; do not auto-reconnect. */
   | { t: 'kicked'; reason: string }
   /** (additive) Turn timer: epoch ms by which `player` must act, or null when off. */
-  | { t: 'timer'; deadline: number | null; player: string | null };
+  | { t: 'timer'; deadline: number | null; player: string | null }
+  /** (additive) The same player connected from another tab/device; this connection is closed
+   *  and should NOT auto-reconnect (that would steal the seat back, forever). */
+  | { t: 'replaced'; message: string };

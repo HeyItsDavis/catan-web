@@ -278,8 +278,9 @@ export class HostRoom {
     for (const other of this.sessions) {
       if (other !== session && other.playerId === id) {
         other.playerId = null;
-        this.send(other, { t: 'error', message: 'Connected from another tab' });
-        other.conn.close();
+        this.send(other, { t: 'replaced', message: 'This room is open in another tab or window' });
+        // Let the notice flush before closing the channel.
+        setTimeout(() => other.conn.close(), 50);
       }
     }
     session.playerId = id;

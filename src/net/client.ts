@@ -285,6 +285,11 @@ export class RoomClient {
         this.set({ status: 'kicked', error: { message: msg.reason, at: this.opts.now() } });
         this.dropConn();
         return;
+      case 'replaced':
+        // Another tab took this seat. Stop here (no auto-reconnect); the user can retry to take it back.
+        this.set({ status: 'failed', error: { message: msg.message, at: this.opts.now() } });
+        this.dropConn();
+        return;
       case 'timer':
         this.set({ timer: { deadline: msg.deadline, player: msg.player } });
         return;

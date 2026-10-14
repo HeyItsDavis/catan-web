@@ -73,6 +73,7 @@ export function PlayerList({ room }: { room: RoomView }) {
                 <button
                   className="btn ghost small danger"
                   title={`Kick ${p.name}`}
+                  aria-label={`Kick ${p.name}`}
                   onClick={() => confirm(`Remove ${p.name} from the room?`) && room.sendMessage({ t: 'lobby:kick', playerId: p.id })}
                 >
                   ✕
