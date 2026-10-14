@@ -9,6 +9,7 @@
  *   __hexlands.forceNextRoll(total)    -> pick an RNG state so the next rollDice totals `total`
  *   __hexlands.giveResources(pid, map) -> add resources to a player (taken from the bank)
  *   __hexlands.stackDeck(deck, cards)  -> put these card ids on top of a deck's draw pile
+ *   __hexlands.setTokenVP(pid, n)      -> set a player's permanent VP tokens (to test winning)
  *
  * The host is authoritative, so these only "cheat" in rooms the caller hosts.
  */
@@ -76,6 +77,14 @@ function install(): void {
         p.resources[r] = (p.resources[r] ?? 0) + n;
         if (g.bank[r] !== undefined && g.bank[r] >= 0) g.bank[r] = Math.max(0, g.bank[r] - n);
       }
+      host.debugSetGame({ ...g, version: g.version + 1 });
+    },
+    setTokenVP(playerId: string, vp: number) {
+      const { host, game } = need();
+      const g = clone(game);
+      const p = g.players.find((x) => x.id === playerId);
+      if (!p) throw new Error(`No player ${playerId}`);
+      p.tokenVP = vp;
       host.debugSetGame({ ...g, version: g.version + 1 });
     },
     stackDeck(deck: Id, cards: Id[]) {

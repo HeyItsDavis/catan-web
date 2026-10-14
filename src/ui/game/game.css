@@ -448,10 +448,10 @@
     grid-template-rows: auto;
     grid-template-areas:
       'top'
+      'left'
       'center'
       'bottom'
-      'right'
-      'left';
+      'right';
     padding: 6px;
     gap: 6px;
   }
@@ -459,9 +459,14 @@
   .g-bank { margin-left: 0; }
   .g-center { height: clamp(300px, 105vw, 62dvh); }
   .g-top, .g-left, .g-right, .g-center, .g-bottom { min-width: 0; }
-  .g-right, .g-left { overflow: visible; }
-  .g-left, .g-opps { flex-direction: column; }
-  .g-opp { min-width: 0; }
+  .g-right { overflow: visible; }
+  /* Opponents: one compact, horizontally scrolling row above the board. */
+  .g-left { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .g-opps { flex-direction: row; flex: 1; padding: 6px; }
+  .g-opp { min-width: 150px; flex: 1; }
+  /* Keep Roll and End turn next to each other at the start of the (scrolling) bar. */
+  .g-ab-primary { order: -2; }
+  .g-ab-end { order: -1; margin-left: 0; }
   .g-actionbar { flex-wrap: nowrap; }
   .g-bottom { position: sticky; bottom: 0; z-index: 5; }
   .g-actionbar { box-shadow: var(--g-shadow); }
