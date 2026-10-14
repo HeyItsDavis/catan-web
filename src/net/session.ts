@@ -10,6 +10,7 @@ import { listenPeer, peerConnector, RoomIdTakenError } from './peerTransport';
 import { generateRoomCode } from './roomCode';
 import { Emitter, type Unsubscribe } from './transport';
 import { registerHost } from './testHooks';
+import { timeoutCommand } from './autoplay';
 
 export type HostNetStatus = 'starting' | 'online' | 'retrying' | 'error';
 export interface HostNetState { status: HostNetStatus; message: string | null }
@@ -69,12 +70,29 @@ export function closeHostedRoom(code: string): void {
   }
 }
 
+/** Turn timer ran out: play one minimal legal move for the player (the timer re-arms after it). */
+function onTimeout(room: HostRoom, playerId: string): void {
+  const def = room.getDefinition();
+  if (!def) return;
+  // Finish what this player owes (e.g. roll, move the robber, end the turn) in one go.
+  for (let i = 0; i < 12; i++) {
+    const game = room.getGame();
+    const cmd = game && timeoutCommand(def, game, playerId);
+    if (!game || !cmd) return;
+    const name = game.players.find((p) => p.id === playerId)?.name ?? 'A player';
+    const note = i === 0 ? `⏱ Time's up for ${name}; the game moved on for them` : undefined;
+    if (room.applyAs(playerId, cmd, note) !== null) return;
+    if (cmd.type === 'endTurn') return;
+  }
+}
+
 function startHostSession(code: string): RoomSession {
   const playerId = getPlayerId();
   const host = new HostRoom({
     roomCode: code,
     hostPlayer: { id: playerId, name: getSavedName() || 'Host' },
     saved: loadSavedRoom(),
+    onTurnTimeout: onTimeout,
   });
   registerHost(host);
   const hostNet = new Store<HostNetState>({ status: 'starting', message: null });

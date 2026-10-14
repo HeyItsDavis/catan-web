@@ -51,9 +51,8 @@ export interface HostOptions {
   now?: () => number;
   random?: () => number;
   /**
-   * Called when a turn timer expires.
-   * TODO(turn-timer): auto end turn / auto-resolve prompts once the engine exposes a
-   * "default answer" helper. Today the host only broadcasts the deadline.
+   * Called when a turn timer expires. The app passes `timeoutCommand` (net/autoplay.ts) via
+   * `applyAs`; without a handler the host only broadcasts the deadline.
    */
   onTurnTimeout?: (room: HostRoom, playerId: string) => void;
 }
@@ -136,6 +135,28 @@ export class HostRoom {
   getGame(): GameState | null { return this.game; }
   /** Definition for the room's current mods (null if the engine cannot build it). */
   getDefinition(): GameDefinition | null { return this.tryDef(this.lobby.mods); }
+
+  /**
+   * Apply a command on behalf of a player (used when the turn timer runs out).
+   * `note` is posted to chat as a system message. Returns the engine error, or null.
+   */
+  applyAs(playerId: string, command: Command, note?: string): string | null {
+    const def = this.getDefinition();
+    if (this.destroyed || !this.game || !def) return 'The game has not started';
+    let res: ReturnType<EngineApi['applyCommand']>;
+    try {
+      res = this.engine.applyCommand(def, this.game, playerId, command);
+    } catch (e) {
+      return `Engine error: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    if (!res.ok) return res.error;
+    this.game = res.state;
+    if (note) this.systemChat(note);
+    this.broadcastGame();
+    this.refreshTimer();
+    this.persist();
+    return null;
+  }
 
   /**
    * Test/debug only (see net/testHooks.ts): replace the authoritative game state and
