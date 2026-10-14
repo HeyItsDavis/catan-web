@@ -26,7 +26,7 @@ export async function newPlayer(browser: Browser, name: string, opts: { viewport
 }
 
 /** Host: enter name on the home page and create a room. Returns the room code. */
-export async function createRoom(p: Player, path = '/'): Promise<string> {
+export async function createRoom(p: Player, path = './'): Promise<string> {
   await p.page.goto(path);
   await p.page.getByLabel('Your name').fill(p.name);
   await p.page.getByRole('button', { name: 'Create room' }).click();

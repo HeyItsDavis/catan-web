@@ -5,7 +5,6 @@
 import type { ComponentType } from 'react';
 import type { Command, GameDefinition, GameState } from '../engine/schema';
 import * as GameScreenModule from './game/GameScreen';
-import * as ModEditorModule from './editor/ModEditor';
 
 export interface GameScreenProps {
   def: GameDefinition;
@@ -22,4 +21,3 @@ function pick<P>(mod: Record<string, unknown>, name: string): ComponentType<P> {
 }
 
 export const GameScreen = pick<GameScreenProps>(GameScreenModule as Record<string, unknown>, 'GameScreen');
-export const ModEditor = pick<object>(ModEditorModule as Record<string, unknown>, 'ModEditor');

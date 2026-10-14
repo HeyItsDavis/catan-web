@@ -1,9 +1,16 @@
+import { lazy, Suspense } from 'react';
 import './App.css';
 import { HomePage } from './ui/lobby/HomePage';
 import { RoomPage } from './ui/lobby/RoomPage';
 import { parseHash, useHash } from './ui/router';
-import { ModEditor } from './ui/slots';
-import { DevGameHarness } from './ui/game/dev/DevGameHarness';
+
+// Split off the screens most players never open (keeps the first load small).
+const ModEditor = lazy(() => import('./ui/editor/ModEditor'));
+const DevGameHarness = lazy(() => import('./ui/game/dev/DevGameHarness'));
+
+function Loading() {
+  return <main className="center-page"><div className="spinner" aria-label="Loading" /></main>;
+}
 
 export default function App() {
   const route = parseHash(useHash());
@@ -19,11 +26,13 @@ export default function App() {
             <a className="brand" href="#/">⬡ Hexlands</a>
             <span className="topbar-title">Mod Editor</span>
           </header>
-          <ModEditor />
+          <Suspense fallback={<Loading />}>
+            <ModEditor />
+          </Suspense>
         </div>
       );
     case 'devGame':
-      return <DevGameHarness />;
+      return <Suspense fallback={<Loading />}><DevGameHarness /></Suspense>;
     case 'notFound':
       return (
         <main className="center-page">
