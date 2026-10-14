@@ -799,6 +799,14 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       if (t.onMove?.length) pushScoped(ctx, th, env.self, t.onMove, { ...env.vars, at, token: t.id });
       return;
     }
+    case 'removeToken': {
+      const prev = s.tokens[eff.token] ?? null;
+      if (!ctx.L.tokens.has(eff.token) || prev === null) return;
+      s.tokens[eff.token] = null;
+      log(ctx, `${playerName(ctx, env.self)} takes the ${ctx.L.tokens.get(eff.token)!.name} off the board`, env.self);
+      emit(ctx, 'tokenMoved', { token: eff.token, at: null, from: prev, player: env.self }, env.self);
+      return;
+    }
     case 'setTerrain': {
       const at = locOf(ctx, env, eff.at);
       if (at && s.hexes[at]) { s.hexes[at].terrain = eff.terrain; ctx.regions = undefined; }

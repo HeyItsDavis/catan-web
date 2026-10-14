@@ -18,7 +18,7 @@ const EFFECT_OPS = new Set([
   'sequence', 'repeat', 'if', 'forEachPlayer', 'forEachPiece', 'forEachLocation', 'chooseOption', 'setVar', 'emit', 'log', 'abortIf',
   'choosePlayer', 'chooseResource', 'chooseLocation', 'choosePiece', 'chooseMany',
   'gain', 'pay', 'transfer', 'steal', 'discard', 'chooseAndGain', 'produce',
-  'place', 'upgrade', 'downgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'setTerrain', 'setHexNumber', 'revealHex',
+  'place', 'upgrade', 'downgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'removeToken', 'setTerrain', 'setHexNumber', 'revealHex',
   'loadCargo', 'unloadCargo', 'addCargo',
   'drawCard', 'giveCard', 'discardCard', 'takeCard', 'shuffleDeck',
   'addVP', 'addStat', 'setStat', 'addGlobal', 'setGlobal', 'setFlag', 'grantTradeRate',
@@ -28,11 +28,11 @@ const EFFECT_OPS = new Set([
 const COND_KEYS = [
   'all', 'any', 'not', 'cmp', 'canAfford', 'isTurnOf', 'phase', 'hasRolled', 'flag', 'setting', 'samePlayer', 'varSet', 'varIs',
   'terrainIs', 'isWater', 'isCoastal', 'occupied', 'adjacentTo', 'connectedTo', 'distanceRule', 'hasToken', 'hexNumberIn',
-  'isAdjacent', 'isNetworkEnd', 'sameRegion', 'hexTag',
+  'isAdjacent', 'isNetworkEnd', 'sameRegion', 'atPort', 'hexTag',
 ];
 const EXPR_KEYS = [
   'var', 'param', 'add', 'sub', 'mul', 'div', 'min', 'max', 'if', 'random', 'resourceCount', 'pieceCount', 'cardCount',
-  'stat', 'global', 'vp', 'dice', 'playerCount', 'longestRoad', 'pieceState', 'sumPieceState', 'cargoCount', 'countPlayers',
+  'stat', 'global', 'vp', 'dice', 'playerCount', 'longestRoad', 'pieceState', 'sumPieceState', 'cargoCount', 'countPlayers', 'hexNumber',
 ];
 const PHASES = ['setup', 'preRoll', 'main', 'specialBuild', 'gameOver'];
 const KINDS = ['hex', 'vertex', 'edge'];
@@ -140,6 +140,7 @@ class Validator {
       case 'longestRoad': this.player(`${path}.longestRoad`, x.longestRoad as PlayerRef, sc); break;
       case 'pieceState': this.varUse(`${path}.pieceState.piece`, (x.pieceState as { piece?: string })?.piece, sc); break;
       case 'cargoCount': this.varUse(`${path}.cargoCount.piece`, (x.cargoCount as { piece?: string })?.piece, sc); break;
+      case 'hexNumber': this.varUse(`${path}.hexNumber`, x.hexNumber, sc); break;
       case 'countPlayers': {
         const q = x.countPlayers as { as: string; filter?: Condition };
         if (!q?.as) { this.err(`${path}.countPlayers.as`, 'countPlayers needs "as"'); break; }
@@ -221,6 +222,12 @@ class Validator {
         at(q, `${path}.connectedTo`);
         this.player(`${path}.connectedTo.owner`, q?.owner, sc);
         q?.via?.forEach((p, i) => this.ref(`${path}.connectedTo.via[${i}]`, 'pieces', p, 'piece'));
+        break;
+      }
+      case 'atPort': {
+        const q = x.atPort as { at: string; port?: string };
+        at(q, `${path}.atPort`);
+        if (q?.port !== undefined) this.ref(`${path}.atPort.port`, 'ports', q.port, 'port');
         break;
       }
       case 'hasToken': {
@@ -346,6 +353,7 @@ class Validator {
         if (typeof e.key !== 'string' || !e.key) this.err(`${path}.key`, 'addCargo needs a goods key'); break;
       case 'setPieceState': this.varUse(`${path}.at`, e.at, sc); this.expr(`${path}.value`, e.value, sc); break;
       case 'moveToken': this.ref(`${path}.token`, 'tokens', e.token, 'token'); this.loc(`${path}.to`, e.to, sc); bindVar(e.as); break;
+      case 'removeToken': this.ref(`${path}.token`, 'tokens', e.token, 'token'); break;
       case 'setTerrain': this.varUse(`${path}.at`, e.at, sc); this.ref(`${path}.terrain`, 'terrains', e.terrain, 'terrain'); break;
       case 'setHexNumber': this.varUse(`${path}.at`, e.at, sc); if (e.number !== null) this.expr(`${path}.number`, e.number, sc); break;
       case 'revealHex': this.varUse(`${path}.at`, e.at, sc); break;

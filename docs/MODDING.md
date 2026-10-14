@@ -294,6 +294,35 @@ Use a flag that lasts forever:
   `place settlement (free, ignore connection) where isAdjacent(at, pieceId)`, then
   `addCargo settler -1`.
 
+### Patterns from the built-in T&B and E&P scenarios
+The scenarios in `src/content/expansions/tb-*` and `ep-*` are complete examples. Some patterns
+worth copying:
+
+* **Tokens you keep in front of you** (fish, gold coins): use a player stat instead of a resource.
+  Stats can't be stolen, traded or discarded on a 7. Check them in `available`
+  (`{ cmp: [{ stat: { key: 'fish' } }, '>=', 3] }`) and pay with `addStat fish -3`.
+* **A random pile of tokens** (fish tokens worth 1-3 fish): a deck of `immediate` cards with
+  `afterPlay: 'discard'` and `reshuffleDiscards: true`. Drawing one runs its effect at once.
+* **"Needs 1 more VP to win"** (the old boot): an award worth `-1` VP whose metric is a stat.
+* **"The hex with the number just rolled"**: *Number on a hex* (`hexNumber`), e.g.
+  `{ cmp: [{ hexNumber: 'h' }, '==', { var: 'total' }] }` inside a `forEachLocation` filter.
+  Save a number on a piece (`setPieceState … value: { hexNumber: 'h' }`) before clearing it with
+  `setHexNumber null`, to give it back later (Barbarian Attack's conquered hexes).
+* **Harbors**: *Is at a harbor* (`atPort`) is true for a harbor's corners, coast edge and sea hex,
+  optionally of one type (`port: 'port-any'`). The Harbormaster award counts buildings on harbors
+  with `pieceCount … where: { atPort: { at: 'candidate' } }`.
+* **Take a token off the board**: `{ op: 'removeToken', token: 'robber' }`. It comes back the next
+  time something moves it. `tokenMoved` fires with `at` empty.
+* **Edges between two special hexes** (a river between two river hexes): "touches none of the
+  other terrains", `{ not: { terrainIs: { at: 'at', terrain: [ …every other terrain… ] } } }`.
+* **Points that follow the board** (+1 VP per building next to a camel): recount on
+  `piecePlaced`, add the difference with `addVP` and remember the count in a stat.
+* **Fog that turns into real terrain**: give each face-down terrain `hidden: true`, and on
+  `hexRevealed` use `setTerrain` to swap it for the real one. Then "explored" is simply
+  "not one of the fog terrains", and ships can sail only beside the real `sea`.
+* **Neutral pieces** (camels, barbarian camps) are owned by whoever placed them. Use the piece type
+  in queries, not the owner.
+
 ### Missions and objectives
 Missions are triggers that combine stats and flags. Count progress with `addStat`, and finish
 the mission with a check like `cmp stat ≥ 3` and `not flag missionDone`. Then reward the
