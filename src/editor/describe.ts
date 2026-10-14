@@ -194,6 +194,7 @@ export function describeExpr(e: Expr | null | undefined, ctx: DescribeContext = 
       const o = (x.cargoCount ?? {}) as { piece: string; key?: string };
       return o.key ? `the ${prettify(o.key)} carried by “${o.piece}”` : `the cargo carried by “${o.piece}”`;
     }
+    case 'hexNumber': return `the number on “${x.hexNumber}”`;
     case 'countPlayers': {
       const o = (x.countPlayers ?? {}) as { as: string; filter?: Condition };
       return o.filter === undefined || o.filter === true
@@ -299,6 +300,10 @@ export function describeCondition(c: Condition | undefined, ctx: DescribeContext
     case 'sameRegion': {
       const [a, b] = x.sameRegion as [string, string];
       return `“${a}” is on the same island as “${b}”`;
+    }
+    case 'atPort': {
+      const o = x.atPort as { at: string; port?: string };
+      return `${loc(o)} is at ${o.port ? `a “${o.port}” harbor` : 'a harbor'}`;
     }
     case 'hexNumberIn': {
       const o = x.hexNumberIn as { at: string; numbers: number[] };
@@ -446,6 +451,7 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
     }
     case 'addCargo': return `add ${describeExpr(e.amount, ctx)} ${prettify(e.key)} to the cargo of “${e.piece}”`;
     case 'moveToken': return `move the ${nm(ctx, 'tokens', e.token)}${e.to ? describeLocation(e.to, ctx, '') : ''}`;
+    case 'removeToken': return `take the ${nm(ctx, 'tokens', e.token)} off the board`;
     case 'setTerrain': return `turn “${e.at}” into ${nm(ctx, 'terrains', e.terrain)}`;
     case 'setHexNumber': return e.number === null ? `clear the number on “${e.at}”` : `set the number on “${e.at}” to ${describeExpr(e.number, ctx)}`;
     case 'revealHex': return `reveal hex “${e.at}”`;

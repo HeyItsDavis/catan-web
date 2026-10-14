@@ -509,6 +509,12 @@ export const EFFECTS: EffectCatalog = {
     ],
     make: () => ({ op: 'moveToken', token: '' }),
   },
+  removeToken: {
+    key: 'removeToken', label: 'Take a token off the board', category: 'Board', shape: 'flat',
+    description: 'Remove a token such as the robber from the board. It returns the next time something moves it.',
+    params: [{ name: 'token', label: 'Token', kind: 'tokenId', default: '' }],
+    make: () => ({ op: 'removeToken', token: '' }),
+  },
   setTerrain: {
     key: 'setTerrain', label: 'Change terrain', category: 'Board', shape: 'flat',
     description: 'Turn a hex into a different terrain.',
@@ -836,6 +842,15 @@ export const CONDITIONS: ConditionCatalog = {
     ],
     make: () => ({ sameRegion: ['at', 'lastPlaced'] }),
   },
+  atPort: {
+    key: 'atPort', label: 'Is at a harbor', category: 'Board', shape: 'object',
+    description: 'True when the location touches a harbor: a corner of the harbor, its coast edge or its sea hex. Optionally only one harbor type.',
+    params: [
+      at(),
+      { name: 'port', label: 'Harbor type', kind: 'string', optional: true, help: 'A port id such as “port-any” or “port-wool”. Leave empty for any harbor.' },
+    ],
+    make: () => ({ atPort: { at: 'at' } }),
+  },
 };
 
 /* ------------------------------------------------------------------------ */
@@ -1008,6 +1023,12 @@ export const EXPRS: ExprCatalog = {
       { name: 'filter', label: 'Where', kind: 'condition', optional: true, default: true },
     ],
     make: () => ({ countPlayers: { as: 'q' } }),
+  },
+  hexNumber: {
+    key: 'hexNumber', label: 'Number on a hex', category: 'Board', shape: 'value',
+    description: 'The number token on a hex (0 if it has none). E.g. compare it with the dice total.',
+    params: [{ name: 'at', label: 'Hex', kind: 'locationVar', varType: 'location', default: 'at' }],
+    make: () => ({ hexNumber: 'at' }),
   },
 };
 

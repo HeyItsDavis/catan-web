@@ -133,6 +133,18 @@ export function evalCond(ctx: Ctx, env: Env, c: Condition | undefined): boolean 
     const rb = regionsOf(ctx, b);
     return [...regionsOf(ctx, a)].some((r) => rb.has(r));
   }
+  if ('atPort' in c) {
+    const loc = locOf(ctx, env, c.atPort.at);
+    if (!loc) return false;
+    const k = kindOf(loc);
+    return ctx.s.ports.some((pt) => {
+      if (c.atPort.port !== undefined && pt.port !== c.atPort.port) return false;
+      if (k === 'vertex') return pt.vertices.includes(loc);
+      if (k === 'hex') return pt.hex === loc;
+      const [a, b] = edgeVertices(loc);
+      return pt.vertices.includes(a) && pt.vertices.includes(b);
+    });
+  }
   if ('hexNumberIn' in c) {
     const loc = locOf(ctx, env, c.hexNumberIn.at);
     if (!loc) return false;

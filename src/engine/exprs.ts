@@ -6,7 +6,7 @@
 import type { Expr, ResourceMap, Id } from './schema';
 import { type Ctx, type Env, findPlayer, settingValue } from './context';
 import { evalCond } from './conditions';
-import { pieceOf, resolvePlayer, resolveResource, queryPieces } from './refs';
+import { locOf, pieceOf, resolvePlayer, resolveResource, queryPieces } from './refs';
 import { randInt } from './rng';
 import { rng } from './context';
 import { computeVPInternal } from './vp';
@@ -93,6 +93,10 @@ function evalRaw(ctx: Ctx, env: Env, e: Expr): number {
     if (!pc?.cargo) return 0;
     if (e.cargoCount.key !== undefined) return pc.cargo[e.cargoCount.key] ?? 0;
     return Object.values(pc.cargo).reduce((a, b) => a + b, 0);
+  }
+  if ('hexNumber' in e) {
+    const loc = locOf(ctx, env, e.hexNumber);
+    return (loc && ctx.s.hexes[loc]?.number) || 0;
   }
   if ('countPlayers' in e) {
     const vars = { ...env.vars };

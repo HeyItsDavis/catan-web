@@ -99,7 +99,10 @@ export type Expr =
   | { cargoCount: { piece: string; key?: Id } }
   /** How many players satisfy `filter` (candidate bound as `as`). E.g. "nobody is stronger than p":
    *  `{cmp: [{countPlayers: {as: 'q', filter: {cmp: [strength(q), '>', strength(p)]}}}, '==', 0]}`. */
-  | { countPlayers: { as: string; filter?: Condition } };
+  | { countPlayers: { as: string; filter?: Condition } }
+  /** The number token on the hex held by this location var (0 if it has none, or it is not a hex).
+   *  E.g. "the fishing grounds with the number just rolled": `{cmp: [{hexNumber: 'h'}, '==', {var: 'total'}]}`. */
+  | { hexNumber: string };
 
 export interface PieceQuery {
   owner?: PlayerRef | 'any' | 'others';
@@ -168,7 +171,10 @@ export type Condition =
    *  `owner` defaults to the owner of the piece at `at`. */
   | { isNetworkEnd: { at: string; owner?: PlayerRef; via?: Id[] } }
   /** Two bound locations touch a common land region ("island"). See PieceQuery.region. */
-  | { sameRegion: [string, string] };
+  | { sameRegion: [string, string] }
+  /** The location touches a harbor (port): a corner is one of the port's two corners, an edge is the
+   *  port's coast edge, a hex is the port's sea hex. `port` limits it to one port type (e.g. 'port-any'). */
+  | { atPort: { at: string; port?: Id } };
 
 /* ------------------------------------------------------------------------ */
 /*  Effects                                                                  */
@@ -281,6 +287,9 @@ export type Effect =
    *  ship or 'spice' on a wagon. Not taken from anyone's hand. Never goes below 0. */
   | { op: 'addCargo'; piece: string; key: Id; amount: Expr }
   | { op: 'moveToken'; token: Id; to?: LocationChoice; as?: string }
+  /** Take a token off the board (e.g. "shoo the robber away"). It comes back the next time it is moved.
+   *  Fires `tokenMoved` with `at` empty. */
+  | { op: 'removeToken'; token: Id }
   | { op: 'setTerrain'; at: string; terrain: Id }                   // fog reveal, terraforming
   | { op: 'setHexNumber'; at: string; number: Expr | null }
   | { op: 'revealHex'; at: string }                                 // fog of war
