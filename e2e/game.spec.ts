@@ -5,8 +5,9 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import {
-  clickHighlight, copyInviteLink, createRoom, hook, hostGame, hostLobbyPlayers, joinViaLink, newPlayer, shot, type Player,
-} from './helpers';
+  clickHighlight, copyInviteLink, createRoom, hook, hostGame, hostLobbyPlayers, joinViaLink, newPlayer, shot, type Player, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 const settingRow = (page: Page, label: string) => page.locator('.setting-row', { hasText: label });
 

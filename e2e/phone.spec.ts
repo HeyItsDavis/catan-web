@@ -3,7 +3,9 @@
  * the board, rolling, trading dialog and a discard. Screenshots go to e2e/.shots/phone-*.png.
  */
 import { expect, test } from '@playwright/test';
-import { copyInviteLink, createRoom, hook, hostGame, joinViaLink, newPlayer, shot, type Player } from './helpers';
+import { copyInviteLink, createRoom, hook, hostGame, joinViaLink, newPlayer, shot, type Player, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 test('guest on a phone can play', async ({ browser }) => {
   const host = await newPlayer(browser, 'Ada');

@@ -1,6 +1,8 @@
 /** Lobby edge cases: second tab, host leaves and resumes, late joiner, kick. */
 import { expect, test } from '@playwright/test';
-import { copyInviteLink, createRoom, hostLobbyPlayers, joinViaLink, newPlayer, shot } from './helpers';
+import { copyInviteLink, createRoom, hostLobbyPlayers, joinViaLink, newPlayer, shot, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 test('same player in two tabs does not ping-pong', async ({ browser }) => {
   const host = await newPlayer(browser, 'Ada');

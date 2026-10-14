@@ -9,12 +9,23 @@ export interface Player {
   errors: string[];
 }
 
+const open: BrowserContext[] = [];
+
+/**
+ * Close every context made by newPlayer. Call from `test.afterEach` in each spec: a leftover
+ * context keeps its PeerJS peer, heartbeats and timers running and slows later tests down.
+ */
+export async function closePlayers(): Promise<void> {
+  await Promise.all(open.splice(0).map((c) => c.close().catch(() => {})));
+}
+
 /** A fresh browser context (separate localStorage = separate player identity). */
 export async function newPlayer(browser: Browser, name: string, opts: { viewport?: { width: number; height: number } } = {}): Promise<Player> {
   const ctx = await browser.newContext({
     viewport: opts.viewport ?? { width: 1400, height: 900 },
     permissions: ['clipboard-read', 'clipboard-write'],
   });
+  open.push(ctx);
   const page = await ctx.newPage();
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));

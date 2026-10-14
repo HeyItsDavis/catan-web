@@ -4,8 +4,9 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import {
-  clickHighlight, copyInviteLink, createRoom, hook, hostGame, joinViaLink, newPlayer, shot, type Player,
-} from './helpers';
+  clickHighlight, copyInviteLink, createRoom, hook, hostGame, joinViaLink, newPlayer, shot, type Player, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 async function openTab(page: Page, name: string) {
   await page.locator('.me-tab', { hasText: name }).click();

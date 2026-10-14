@@ -3,7 +3,9 @@
  * Run with `npm run e2e:pages`.
  */
 import { expect, test } from '@playwright/test';
-import { copyInviteLink, createRoom, joinViaLink, newPlayer } from './helpers';
+import { copyInviteLink, createRoom, joinViaLink, newPlayer, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 test('subpath build: assets load, invite link keeps the subpath, guest joins', async ({ browser, baseURL }) => {
   expect(baseURL).toContain('/catan-web/');

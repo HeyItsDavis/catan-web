@@ -186,7 +186,7 @@ export function CollectionTab(props: {
           />
         ) : (
           <div className="me-empty me-empty-big">
-            Select a {info.singular} on the left, or create a new one.
+            Select a {info.singular} from the list, or create a new one.
           </div>
         )}
       </div>

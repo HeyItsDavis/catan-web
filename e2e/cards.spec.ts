@@ -4,8 +4,9 @@
  */
 import { expect, test } from '@playwright/test';
 import {
-  clickHighlight, copyInviteLink, createRoom, hook, hostGame, joinViaLink, newPlayer, shot, type GameLite, type Player,
-} from './helpers';
+  clickHighlight, copyInviteLink, createRoom, hook, hostGame, joinViaLink, newPlayer, shot, type GameLite, type Player, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 test('dev cards, city, chat and the end of the game', async ({ browser }) => {
   const host = await newPlayer(browser, 'Ada');

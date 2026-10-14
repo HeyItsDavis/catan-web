@@ -1,6 +1,8 @@
 /** Turn timer: when it runs out, the host moves the game on for the idle player. */
 import { expect, test } from '@playwright/test';
-import { copyInviteLink, createRoom, hostGame, joinViaLink, newPlayer } from './helpers';
+import { copyInviteLink, createRoom, hostGame, joinViaLink, newPlayer, closePlayers } from './helpers';
+
+test.afterEach(closePlayers);
 
 test('an idle player is moved on when the timer runs out', async ({ browser }) => {
   const host = await newPlayer(browser, 'Ada');
