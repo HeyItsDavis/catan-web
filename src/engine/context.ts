@@ -64,6 +64,8 @@ export interface Ctx {
   aborted?: string;
   /** location -> pieces index (lazy, invalidated on piece mutation). */
   idx?: Map<LocationId, PieceInstance[]>;
+  /** hex -> land region id (lazy, invalidated by setTerrain). See regions.ts. */
+  regions?: Map<string, number>;
   tmpRng?: RngHolder;
   /** Wall-clock ms supplied by the host (for turnStartedAt). */
   now?: number;

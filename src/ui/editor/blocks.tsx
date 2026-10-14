@@ -12,9 +12,9 @@ import {
 } from '../../editor/catalog';
 import { describeCondition, describeEffect, describeEffects, describeExpr } from '../../editor/describe';
 import { formatPath, type Path } from '../../editor/paths';
-import { atScope, innerScope, mergeScope, scopeAt, varsOfType, type VarInfo } from '../../editor/vars';
+import { atScope, candidateScope, innerScope, loopVarsOf, mergeScope, scopeAt, varsOfType, type VarInfo } from '../../editor/vars';
 import { useEditor } from './context';
-import { Checkbox, MultiRef, NumberInput, NumbersInput, RefSelect, Select, SuggestInput, TextInput, type Opt } from './fields';
+import { Checkbox, MultiRef, NumberInput, NumberMap, NumbersInput, RefSelect, Select, SuggestInput, TextInput, type Opt } from './fields';
 
 type Family = 'effect' | 'condition' | 'expr';
 
@@ -225,7 +225,7 @@ export function BlockParams(props: {
   const big = props.inline ? [] : shown.filter(p => isBig(p, values[p.name]));
   const field = (p: ParamSpec) => {
     const pp = [...props.path, ...paramPathSegments(spec, p.name)];
-    const s = props.effect ? innerScope(props.effect, p.name, props.scope) : props.scope;
+    const s = props.effect ? innerScope(props.effect, p.name, props.scope) : mergeScope(props.scope, loopVarsOf(props.spec, values));
     return (
       <ParamRow key={p.name} p={p} value={values[p.name]} onChange={v => set(p.name, v)} path={pp} scope={s} big={isBig(p, values[p.name]) && !props.inline} />
     );
@@ -689,6 +689,7 @@ export function ResourceMapEditor(props: { value: ResourceMap | undefined; onCha
 }
 
 function PieceQueryEditor(props: { value: PieceQuery | undefined; onChange(v: PieceQuery): void; path: Path; scope: VarInfo[] }) {
+  const { suggestions } = useEditor();
   const q = props.value ?? {};
   const set = <K extends keyof PieceQuery>(k: K, v: PieceQuery[K] | undefined) => {
     const next = { ...q };
@@ -727,10 +728,31 @@ function PieceQueryEditor(props: { value: PieceQuery | undefined; onChange(v: Pi
           <MultiRef collection="terrains" value={q.onTerrain} onChange={v => set('onTerrain', v)} />
         </div>
       ) : null}
+      {q.region !== undefined ? (
+        <div className="me-param" data-path={formatPath([...props.path, 'region'])}>
+          <span className="me-param-label">On the same island as <button type="button" className="me-icon-btn me-clear" onClick={() => set('region', undefined)}>×</button></span>
+          <VarInput value={q.region} onChange={v => set('region', v)} scope={props.scope} type={['location', 'piece']} />
+        </div>
+      ) : null}
+      {q.state !== undefined ? (
+        <div className="me-param me-param-big" data-path={formatPath([...props.path, 'state'])}>
+          <span className="me-param-label">With state <button type="button" className="me-icon-btn me-clear" onClick={() => set('state', undefined)}>×</button></span>
+          <NumberMap value={q.state} onChange={v => set('state', v ?? {})} keyPlaceholder="active" suggestions={suggestions.pieceState} />
+        </div>
+      ) : null}
+      {q.where !== undefined ? (
+        <div className="me-param me-param-big" data-path={formatPath([...props.path, 'where'])}>
+          <span className="me-param-label" title="The candidate piece is “candidate” (its spot) and “candidateId”.">Only pieces where <button type="button" className="me-icon-btn me-clear" onClick={() => set('where', undefined)}>×</button></span>
+          <ConditionEditor value={q.where} onChange={v => set('where', v)} path={[...props.path, 'where']} scope={mergeScope(props.scope, candidateScope())} />
+        </div>
+      ) : null}
       <div className="me-more">
         {q.tag === undefined ? <button type="button" className="me-chip me-chip-add" onClick={() => set('tag', '')}>＋ Tag</button> : null}
         {q.near === undefined ? <button type="button" className="me-chip me-chip-add" onClick={() => set('near', varsOfType(props.scope, 'location')[0]?.name ?? '')}>＋ Near</button> : null}
         {q.onTerrain === undefined ? <button type="button" className="me-chip me-chip-add" onClick={() => set('onTerrain', [])}>＋ Touching terrain</button> : null}
+        {q.region === undefined ? <button type="button" className="me-chip me-chip-add" onClick={() => set('region', varsOfType(props.scope, 'location')[0]?.name ?? '')}>＋ Same island</button> : null}
+        {q.state === undefined ? <button type="button" className="me-chip me-chip-add" onClick={() => set('state', {})}>＋ State</button> : null}
+        {q.where === undefined ? <button type="button" className="me-chip me-chip-add" onClick={() => set('where', true)}>＋ Only where</button> : null}
       </div>
     </div>
   );

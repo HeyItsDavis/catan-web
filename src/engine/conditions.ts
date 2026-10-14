@@ -13,11 +13,15 @@
  *    with a `network`); vertex – an own network piece on an incident edge (or own piece on it).
  *  - distanceRule: `minDistance` = minimum number of edges between `at` and any "building"
  *    (see context.isBuilding); default 2 = the standard rule (no building on an adjacent vertex).
+ *  - hasToken.near: the token is on `at` or on a location adjacent to it.
+ *  - isNetworkEnd: see isNetworkEnd() below. sameRegion: see regions.ts.
+ *  Any location var may hold a piece instance id instead (= that piece's location).
  */
 import type { Condition } from './schema';
 import { type Ctx, type Env, currentPlayerId, findPlayer, isBuilding, piecesAt, settingValue } from './context';
 import { evalExpr, evalResourceMap } from './exprs';
-import { locVar, pieceMatches, resolvePlayer } from './refs';
+import { locOf, pieceMatches, pieceOf, resolvePlayer } from './refs';
+import { regionsOf } from './regions';
 import { adjacentLocations, areAdjacent, boardTopo, hexesOf, kindOf } from './board';
 import { edgeVertices, parseHexId, hexNeighbors, hexId, vertexEdges, vertexNeighbors } from './board/topology';
 
@@ -60,56 +64,77 @@ export function evalCond(ctx: Ctx, env: Env, c: Condition | undefined): boolean 
     return a !== null && a === b;
   }
   if ('varSet' in c) return env.vars[c.varSet] !== undefined && env.vars[c.varSet] !== null;
+  if ('varIs' in c) {
+    const v = env.vars[c.varIs.var];
+    return v !== undefined && v !== null && String(v) === String(c.varIs.value);
+  }
   if ('isAdjacent' in c) {
-    const a = locVar(env, c.isAdjacent[0]);
-    const b = locVar(env, c.isAdjacent[1]);
+    const a = locOf(ctx, env, c.isAdjacent[0]);
+    const b = locOf(ctx, env, c.isAdjacent[1]);
     return !!a && !!b && areAdjacent(a, b);
   }
 
   // --- location scoped ---
   if ('terrainIs' in c) {
-    const loc = locVar(env, c.terrainIs.at);
+    const loc = locOf(ctx, env, c.terrainIs.at);
     if (!loc) return false;
     const ts = Array.isArray(c.terrainIs.terrain) ? c.terrainIs.terrain : [c.terrainIs.terrain];
     return hexesOf(boardTopo(ctx.s), loc).some((h) => ts.includes(ctx.s.hexes[h].terrain));
   }
   if ('isWater' in c) {
-    const loc = locVar(env, c.isWater.at);
+    const loc = locOf(ctx, env, c.isWater.at);
     if (!loc) return false;
     return hexesOf(boardTopo(ctx.s), loc).every((h) => isWaterHex(ctx, h));
   }
   if ('isCoastal' in c) {
-    const loc = locVar(env, c.isCoastal.at);
+    const loc = locOf(ctx, env, c.isCoastal.at);
     if (!loc) return false;
     return isCoastal(ctx, loc);
   }
   if ('occupied' in c) {
-    const loc = locVar(env, c.occupied.at);
+    const loc = locOf(ctx, env, c.occupied.at);
     if (!loc) return false;
     return piecesAt(ctx, loc).some((p) => pieceMatches(ctx, env, p, c.occupied));
   }
   if ('adjacentTo' in c) {
-    const loc = locVar(env, c.adjacentTo.at);
+    const loc = locOf(ctx, env, c.adjacentTo.at);
     if (!loc) return false;
     return adjacentLocations(loc).some((l) => piecesAt(ctx, l).some((p) => pieceMatches(ctx, env, p, c.adjacentTo)));
   }
   if ('connectedTo' in c) {
-    const loc = locVar(env, c.connectedTo.at);
+    const loc = locOf(ctx, env, c.connectedTo.at);
     const pid = resolvePlayer(ctx, env, c.connectedTo.owner);
     if (!loc || !pid) return false;
     return connectedTo(ctx, loc, pid, c.connectedTo.via);
   }
   if ('distanceRule' in c) {
-    const loc = locVar(env, c.distanceRule.at);
+    const loc = locOf(ctx, env, c.distanceRule.at);
     if (!loc) return false;
     return distanceOk(ctx, loc, (c.distanceRule.minDistance ?? 2) - 1);
   }
   if ('hasToken' in c) {
-    const loc = locVar(env, c.hasToken.at);
-    return !!loc && ctx.s.tokens[c.hasToken.token] === loc;
+    const loc = locOf(ctx, env, c.hasToken.at);
+    const tok = ctx.s.tokens[c.hasToken.token];
+    if (!loc || !tok) return false;
+    return tok === loc || (!!c.hasToken.near && areAdjacent(loc, tok));
+  }
+  if ('isNetworkEnd' in c) {
+    const loc = locOf(ctx, env, c.isNetworkEnd.at);
+    if (!loc || kindOf(loc) !== 'edge') return false;
+    const here = pieceOf(ctx, env, c.isNetworkEnd.at);
+    const pid = c.isNetworkEnd.owner !== undefined ? resolvePlayer(ctx, env, c.isNetworkEnd.owner) : here?.owner ?? env.self;
+    if (!pid) return false;
+    return isNetworkEnd(ctx, loc, pid, c.isNetworkEnd.via, here?.type);
+  }
+  if ('sameRegion' in c) {
+    const a = locOf(ctx, env, c.sameRegion[0]);
+    const b = locOf(ctx, env, c.sameRegion[1]);
+    if (!a || !b) return false;
+    const rb = regionsOf(ctx, b);
+    return [...regionsOf(ctx, a)].some((r) => rb.has(r));
   }
   if ('hexNumberIn' in c) {
-    const loc = locVar(env, c.hexNumberIn.at);
+    const loc = locOf(ctx, env, c.hexNumberIn.at);
     if (!loc) return false;
     return hexesOf(boardTopo(ctx.s), loc).some((h) => {
       const n = ctx.s.hexes[h].number;
@@ -165,6 +190,20 @@ export function connectedTo(ctx: Ctx, loc: string, pid: string, via?: string[]):
     return false;
   }
   return adjacentLocations(loc).some((l) => piecesAt(ctx, l).some((p) => p.owner === pid));
+}
+
+/**
+ * An edge is an open end of `pid`'s route if some endpoint holds no piece of `pid` and touches no
+ * other edge of `pid`'s route. Route pieces = `via` types, else pieces sharing the network of
+ * `type` (the piece on the edge), else any network piece.
+ */
+export function isNetworkEnd(ctx: Ctx, edge: string, pid: string, via?: string[], type?: string): boolean {
+  const net = type ? ctx.L.pieces.get(type)?.network : undefined;
+  const isRoute = (t: string) => via ? via.includes(t) : net ? ctx.L.pieces.get(t)?.network === net : !!ctx.L.pieces.get(t)?.network;
+  return edgeVertices(edge).some((v) => {
+    if (piecesAt(ctx, v).some((p) => p.owner === pid)) return false;
+    return !vertexEdges(v).some((e) => e !== edge && piecesAt(ctx, e).some((p) => p.owner === pid && isRoute(p.type)));
+  });
 }
 
 function distanceOk(ctx: Ctx, loc: string, n: number): boolean {

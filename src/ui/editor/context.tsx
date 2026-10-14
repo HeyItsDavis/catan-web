@@ -10,6 +10,7 @@ export interface Suggestions {
   global: string[];
   flag: string[];
   pieceState: string[];
+  cargo: string[];
   event: string[];
 }
 
@@ -30,7 +31,7 @@ export const EditorContext = createContext<EditorCtx>({
   parent: emptyDefinition(),
   dctx: {},
   focusPath: null,
-  suggestions: { stat: [], global: [], flag: [], pieceState: [], event: [] },
+  suggestions: { stat: [], global: [], flag: [], pieceState: [], cargo: [], event: [] },
   library: [],
 });
 
@@ -40,7 +41,7 @@ export function useEditor(): EditorCtx {
 
 /** Collect key names (stats, globals, flags, piece state, custom events) used anywhere in the definition. */
 export function collectSuggestions(def: GameDefinition): Suggestions {
-  const sets = { stat: new Set<string>(), global: new Set<string>(), flag: new Set<string>(), pieceState: new Set<string>(), event: new Set<string>() };
+  const sets = { stat: new Set<string>(), global: new Set<string>(), flag: new Set<string>(), pieceState: new Set<string>(), cargo: new Set<string>(), event: new Set<string>() };
   const v: WalkVisitor = {
     param(p, value) {
       if (typeof value !== 'string' || !value) return;
@@ -60,5 +61,5 @@ export function collectSuggestions(def: GameDefinition): Suggestions {
   for (const a of def.awards) walkExpr(a.metric, [], [], v);
   for (const e of Object.keys(EVENTS)) sets.event.delete(e);
   const sorted = (s: Set<string>) => [...s].sort();
-  return { stat: sorted(sets.stat), global: sorted(sets.global), flag: sorted(sets.flag), pieceState: sorted(sets.pieceState), event: sorted(sets.event) };
+  return { stat: sorted(sets.stat), global: sorted(sets.global), flag: sorted(sets.flag), pieceState: sorted(sets.pieceState), cargo: sorted(new Set([...sets.cargo, ...def.resources.map(r => r.id)])), event: sorted(sets.event) };
 }

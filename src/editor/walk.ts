@@ -4,7 +4,7 @@ import {
   conditionSpec, effectSpec, exprSpec, paramPathSegments, readParams, type BlockSpec, type ParamSpec,
 } from './catalog';
 import type { Path } from './paths';
-import { atScope, innerScope, mergeScope, scopeAt, type VarInfo } from './vars';
+import { atScope, candidateScope, innerScope, loopVarsOf, mergeScope, scopeAt, type VarInfo } from './vars';
 
 export type Family = 'effect' | 'condition' | 'expr';
 
@@ -50,7 +50,7 @@ function walkParams(spec: BlockSpec<unknown>, node: unknown, path: Path, scope: 
   for (const p of spec.params) {
     const value = values[p.name];
     const pp = [...path, ...paramPathSegments(spec, p.name)];
-    const s = effect ? innerScope(effect, p.name, scope) : scope;
+    const s = effect ? innerScope(effect, p.name, scope) : mergeScope(scope, loopVarsOf(spec, values));
     v.param?.(p, value, pp, s, spec);
     if (value === undefined) continue;
     switch (p.kind) {
@@ -68,6 +68,11 @@ function walkParams(spec: BlockSpec<unknown>, node: unknown, path: Path, scope: 
           walkEffects(o?.do ?? [], [...pp, i, 'do'], s, v);
         });
         break;
+      case 'pieceQuery': {
+        const where = (value as { where?: Condition }).where;
+        walkCondition(where, [...pp, 'where'], mergeScope(s, candidateScope()), v);
+        break;
+      }
       case 'locationChoice': {
         const where = (value as { where?: Condition }).where;
         walkCondition(where, [...pp, 'where'], mergeScope(s, atScope()), v);

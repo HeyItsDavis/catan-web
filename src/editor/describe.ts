@@ -119,6 +119,9 @@ export function describePieceQuery(q: PieceQuery | undefined, ctx: DescribeConte
   }
   if (qq.near) s += ` near “${qq.near}”`;
   if (qq.onTerrain?.length) s += ` on ${oneOrMany(ctx, 'terrains', qq.onTerrain)}`;
+  if (qq.state && Object.keys(qq.state).length) s += ` with ${list(Object.entries(qq.state).map(([k, v]) => `“${k}” = ${v}`))}`;
+  if (qq.region) s += ` on the same island as “${qq.region}”`;
+  if (qq.where !== undefined && qq.where !== true) s += ` where ${describeCondition(qq.where, ctx)}`;
   return s;
 }
 
@@ -179,6 +182,24 @@ export function describeExpr(e: Expr | null | undefined, ctx: DescribeContext = 
     case 'dice': return x.dice === 'total' ? 'the dice total' : `die #${Number(x.dice) + 1}`;
     case 'playerCount': return 'the number of players';
     case 'longestRoad': return `${possessive(x.longestRoad as PlayerRef, ctx)} longest road length`;
+    case 'pieceState': {
+      const o = (x.pieceState ?? {}) as { piece: string; key: string };
+      return `the “${o.key}” of “${o.piece}”`;
+    }
+    case 'sumPieceState': {
+      const o = (x.sumPieceState ?? {}) as { query: PieceQuery; key: string };
+      return `the total “${o.key}” of ${describePieceQuery(o.query, ctx, true)}`;
+    }
+    case 'cargoCount': {
+      const o = (x.cargoCount ?? {}) as { piece: string; key?: string };
+      return o.key ? `the ${prettify(o.key)} carried by “${o.piece}”` : `the cargo carried by “${o.piece}”`;
+    }
+    case 'countPlayers': {
+      const o = (x.countPlayers ?? {}) as { as: string; filter?: Condition };
+      return o.filter === undefined || o.filter === true
+        ? 'the number of players'
+        : `the number of players “${o.as}” where ${describeCondition(o.filter, ctx)}`;
+    }
   }
   return spec.label;
 }
@@ -237,6 +258,10 @@ export function describeCondition(c: Condition | undefined, ctx: DescribeContext
       return `${describePlayer(a, ctx)} ${a === 'self' || a === undefined ? 'are' : 'is'} ${describePlayer(b, ctx)}`;
     }
     case 'varSet': return `“${x.varSet}” has been chosen`;
+    case 'varIs': {
+      const o = (x.varIs ?? {}) as { var: string; value: string };
+      return `“${o.var}” is “${o.value}”`;
+    }
     case 'terrainIs': {
       const o = x.terrainIs as { at: string; terrain: string | string[] };
       return `${loc(o)} is ${oneOrMany(ctx, 'terrains', o.terrain)}`;
@@ -263,8 +288,17 @@ export function describeCondition(c: Condition | undefined, ctx: DescribeContext
       return `no corner piece is closer than ${d} ${d === 1 ? 'edge' : 'edges'} to ${loc(o)}`;
     }
     case 'hasToken': {
-      const o = x.hasToken as { at: string; token: string };
-      return `the ${nm(ctx, 'tokens', o.token)} is on ${loc(o)}`;
+      const o = x.hasToken as { at: string; token: string; near?: boolean };
+      return `the ${nm(ctx, 'tokens', o.token)} is ${o.near ? 'on or next to' : 'on'} ${loc(o)}`;
+    }
+    case 'isNetworkEnd': {
+      const o = x.isNetworkEnd as { at: string; owner?: PlayerRef; via?: string[] };
+      const via = o.via?.length ? ` of ${oneOrMany(ctx, 'pieces', o.via)}` : '';
+      return `${loc(o)} is an open end of ${o.owner ? possessive(o.owner, ctx) : 'its owner’s'} route${via}`;
+    }
+    case 'sameRegion': {
+      const [a, b] = x.sameRegion as [string, string];
+      return `“${a}” is on the same island as “${b}”`;
     }
     case 'hexNumberIn': {
       const o = x.hexNumberIn as { at: string; numbers: number[] };
@@ -308,6 +342,11 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
       const simul = e.order === 'simultaneous' ? ' (all at once)' : '';
       return `for each player “${e.as}”${f}${simul}: ${steps(e.do, ctx)}`;
     }
+    case 'forEachLocation': {
+      const f = e.filter !== undefined && e.filter !== true ? ` where ${describeCondition(e.filter, ctx)}` : '';
+      const kind = e.kind === 'vertex' ? 'corner' : e.kind;
+      return `for each ${kind} “${e.as}”${f}: ${steps(e.do, ctx)}`;
+    }
     case 'forEachPiece': return `for each ${describePieceQuery(e.query, ctx)} (“${e.as}”): ${steps(e.do, ctx)}`;
     case 'chooseOption': {
       const opts = (e.options ?? []).map(o => `“${o.label}” → ${steps(o.do, ctx)}`);
@@ -336,6 +375,13 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
     case 'choosePiece': {
       const f = e.filter !== undefined && e.filter !== true ? ` where ${describeCondition(e.filter, ctx)}` : '';
       return `${act(e.player, ctx, 'choose', 'chooses')} ${article(describePieceQuery(e.query, ctx))}${f} as “${e.as}”${e.optional ? ' (may skip)' : ''}`;
+    }
+    case 'chooseMany': {
+      const what = e.of === 'location' ? (e.kind === 'vertex' ? 'corners' : e.kind ? `${e.kind}s` : 'hexes')
+        : e.of === 'piece' ? describePieceQuery(e.query, ctx, true) : `${e.of}s`;
+      const f = e.filter !== undefined && e.filter !== true ? ` where ${describeCondition(e.filter, ctx)}` : '';
+      const atLeast = e.min !== undefined ? ` (at least ${describeExpr(e.min, ctx)})` : '';
+      return `${act(e.player, ctx, 'choose', 'chooses')} up to ${describeExpr(e.count, ctx)} different ${what}${f}${atLeast}; for each “${e.as}”: ${steps(e.do, ctx)}`;
     }
     case 'gain': return `${act(e.player, ctx, 'gain', 'gains')} ${describeResourceMap(e.resources, ctx)}`;
     case 'pay': return `${act(e.player, ctx, 'pay', 'pays')} ${describeResourceMap(e.resources, ctx)}`;
@@ -377,9 +423,28 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
     case 'movePiece': {
       const from = e.from ? ` from${describeLocation(e.from, ctx, ' anywhere')}` : '';
       const to = e.to ? ` to${describeLocation(e.to, ctx, ' a new spot')}` : '';
-      return `move ${article(describePieceQuery(e.query, ctx))}${from}${to}`;
+      let s = `${act(e.player, ctx, 'move', 'moves')} ${article(describePieceQuery(e.query, ctx))}${from}${to}`;
+      if (e.maxSteps !== undefined) s += ` up to ${describeExpr(e.maxSteps, ctx)} steps`;
+      if (e.path !== undefined && e.path !== true) s += ` (each step where ${describeCondition(e.path, ctx)})`;
+      if (e.anywhere) s += ', ignoring placement rules';
+      return s;
+    }
+    case 'downgrade': {
+      let s = `${act(e.player, ctx, 'reduce', 'reduces')} ${article(oneOrMany(ctx, 'pieces', e.from))} to ${article(nm(ctx, 'pieces', e.to))}`;
+      s += describeLocation(e.location, ctx);
+      return s;
     }
     case 'setPieceState': return `set “${e.key}” of “${e.at}” to ${describeExpr(e.value, ctx)}`;
+    case 'loadCargo': {
+      const amt = e.amount === undefined ? 1 : e.amount;
+      return `${act(e.player, ctx, 'load', 'loads')} ${describeExpr(amt, ctx)} ${describeResourceRef(e.resource, ctx)} onto “${e.piece}”`;
+    }
+    case 'unloadCargo': {
+      const what = e.resource === undefined || e.resource === 'all' ? 'all resource cargo' : describeResourceRef(e.resource, ctx);
+      const amt = e.amount === undefined ? '' : `${describeExpr(e.amount, ctx)} `;
+      return `unload ${amt}${what} from “${e.piece}” to ${describePlayer(e.to, ctx)}`;
+    }
+    case 'addCargo': return `add ${describeExpr(e.amount, ctx)} ${prettify(e.key)} to the cargo of “${e.piece}”`;
     case 'moveToken': return `move the ${nm(ctx, 'tokens', e.token)}${e.to ? describeLocation(e.to, ctx, '') : ''}`;
     case 'setTerrain': return `turn “${e.at}” into ${nm(ctx, 'terrains', e.terrain)}`;
     case 'setHexNumber': return e.number === null ? `clear the number on “${e.at}”` : `set the number on “${e.at}” to ${describeExpr(e.number, ctx)}`;

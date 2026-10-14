@@ -1,16 +1,16 @@
 /**
  * Resource production. A hex produces when its number is rolled (or when targeted directly),
- * it is revealed, and no token with `blocksProduction` sits on it. Every vertex piece with
- * productionMultiplier > 0 on its corners receives terrain.produces x multiplier plus any
+ * it is revealed, and no token with `blocksProduction` sits on it. Every piece with
+ * productionMultiplier > 0 on its corners (or on its edges / the hex itself) receives terrain.produces x multiplier plus any
  * matching productionBonus. Bank shortage rule: if the bank can't cover all claims for a
  * resource and more than one player claims it, nobody receives that resource.
  * Gold-style terrains (producesChoice) are returned as owed choices for the interpreter.
  */
 import type { Id } from './schema';
-import { type Ctx, emit, log, piecesAt, playerName } from './context';
+import { type Ctx, emit, log, piecesAt, playerName, playersFrom } from './context';
 import { evalResourceMap } from './exprs';
 import { bankHas, moveResource } from './resources';
-import { hexCorners, parseHexId } from './board/topology';
+import { hexCorners, hexEdges, parseHexId } from './board/topology';
 
 export interface GoldOwed { player: string; amount: number; options?: Id[] }
 
@@ -38,7 +38,9 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
     if (!hex.revealed || hexBlocked(ctx, hid)) continue;
     const terr = ctx.L.terrains.get(hex.terrain);
     if (!terr) continue;
-    for (const v of hexCorners(parseHexId(hid))) {
+    const c = parseHexId(hid);
+    // corner pieces (settlements, cities), plus edge pieces (touch 2 hexes) and pieces on the hex itself
+    for (const v of [...hexCorners(c), ...hexEdges(c), hid]) {
       for (const pc of piecesAt(ctx, v)) {
         if (opts.player && pc.owner !== opts.player) continue;
         const pdef = ctx.L.pieces.get(pc.type);
@@ -65,6 +67,7 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
     t.total += n; t.claimants += 1;
     totals.set(r, t);
   }
+  const received = new Map<string, number>();
   for (const [pid, m] of claims) {
     const got: string[] = [];
     for (const [r, n] of m) {
@@ -72,12 +75,19 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
       if (bankHas(ctx, r) < t.total && t.claimants > 1) continue;
       const moved = moveResource(ctx, 'bank', pid, r, n);
       if (moved > 0) got.push(`${moved} ${ctx.L.resources.get(r)?.name ?? r}`);
+      received.set(pid, (received.get(pid) ?? 0) + moved);
     }
     if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid);
   }
   for (const [r, t] of totals) {
     if (bankHas(ctx, r) < t.total && t.claimants > 1) log(ctx, `The bank is short of ${ctx.L.resources.get(r)?.name ?? r}; nobody receives it`);
   }
+  const owed = [...gold.values()].filter((g) => g.amount > 0);
+  for (const g of owed) received.set(g.player, (received.get(g.player) ?? 0) + g.amount);
   emit(ctx, 'production', { roll: opts.roll ?? null, hex: opts.hex ?? null });
-  return [...gold.values()].filter((g) => g.amount > 0);
+  for (const pid of playersFrom(ctx)) {
+    if (opts.player && pid !== opts.player) continue;
+    emit(ctx, 'playerProduction', { player: pid, amount: received.get(pid) ?? 0, roll: opts.roll ?? null, hex: opts.hex ?? null }, pid);
+  }
+  return owed;
 }

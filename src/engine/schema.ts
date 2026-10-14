@@ -88,7 +88,18 @@ export type Expr =
   | { vp: PlayerRef }
   | { dice: 'total' | number }                         // last roll: total or die index
   | { playerCount: true }
-  | { longestRoad: PlayerRef };                        // builtin graph metric
+  | { longestRoad: PlayerRef }                         // builtin graph metric
+  /** A number stored on one piece (PieceInstance.state). `piece` is a var holding a piece instance id
+   *  or a location id (first piece there). Missing piece/key = 0. */
+  | { pieceState: { piece: string; key: string } }
+  /** Sum of a state key over every piece matching the query (e.g. total strength of active knights:
+   *  `{sumPieceState: {query: {tag: 'knight', owner: 'self', state: {active: 1}}, key: 'strength'}}`). */
+  | { sumPieceState: { query: PieceQuery; key: string } }
+  /** Amount of cargo carried by a piece (see loadCargo / addCargo). Omit `key` = total of all cargo. */
+  | { cargoCount: { piece: string; key?: Id } }
+  /** How many players satisfy `filter` (candidate bound as `as`). E.g. "nobody is stronger than p":
+   *  `{cmp: [{countPlayers: {as: 'q', filter: {cmp: [strength(q), '>', strength(p)]}}}, '==', 0]}`. */
+  | { countPlayers: { as: string; filter?: Condition } };
 
 export interface PieceQuery {
   owner?: PlayerRef | 'any' | 'others';
@@ -99,6 +110,15 @@ export interface PieceQuery {
   onTerrain?: Id[];
   /** Pieces carrying a tag (see PieceDef.tags). */
   tag?: string;
+  /** Pieces whose state has exactly these values (e.g. `{active: 1}`). Missing keys count as 0. */
+  state?: Record<string, number>;
+  /** Pieces on the same land region ("island") as the location in this var: a piece belongs to every
+   *  region of the land hexes it touches. Regions = groups of non-water hexes joined by shared sides. */
+  region?: string;
+  /** Extra per-piece test. The candidate piece is bound as `candidate` (its location) and
+   *  `candidateId` (its instance id); other vars stay visible. E.g. only pieces whose owner has more
+   *  than 2 VP: `{cmp: [{vp: {ownerOf: 'candidateId'}}, '>', 2]}`. */
+  where?: Condition;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -122,6 +142,9 @@ export type Condition =
   | { setting: string }                                 // boolean lobby setting is on
   | { samePlayer: [PlayerRef, PlayerRef] }
   | { varSet: string }
+  /** A var holds exactly this id/text, e.g. on `piecePlaced`: `{varIs: {var: 'piece', value: 'settlement'}}`,
+   *  on `awardChanged`: `{varIs: {var: 'award', value: 'longestRoad'}}`. (Numbers: use `cmp`.) */
+  | { varIs: { var: string; value: string } }
   /** Location-scoped tests, used inside placement rules and choose filters. `at` is a var. */
   | { terrainIs: { at: string; terrain: Id | Id[] } }
   | { isWater: { at: string } }
@@ -132,11 +155,20 @@ export type Condition =
   /** `minDistance` = minimum number of edges between `at` and any building (piece tagged 'building'
    *  or with productionMultiplier > 0). Default 2 = standard rule (adjacent vertices forbidden). */
   | { distanceRule: { at: string; minDistance?: number } }
-  | { hasToken: { at: string; token: Id } }
+  /** The token sits on `at` (with `near: true`: on `at` or on any location adjacent to it, e.g. a pirate
+   *  on a hex blocks all six of its edges). */
+  | { hasToken: { at: string; token: Id; near?: boolean } }
   | { hexNumberIn: { at: string; numbers: number[] } }
   /** Two bound location vars are adjacent (hex/vertex/edge incidence or neighbors). Used e.g. by the
    *  setup road rule: `{ isAdjacent: ['at', 'lastPlaced'] }` (engine binds `lastPlaced` during setup). */
-  | { isAdjacent: [string, string] };
+  | { isAdjacent: [string, string] }
+  /** The network piece at edge `at` sits at an OPEN END of its owner's route: at least one endpoint has
+   *  no piece of the owner and no other edge of the owner's network (`via` piece types; default: pieces
+   *  sharing the network of the piece at `at`). Seafarers: only such ships may move.
+   *  `owner` defaults to the owner of the piece at `at`. */
+  | { isNetworkEnd: { at: string; owner?: PlayerRef; via?: Id[] } }
+  /** Two bound locations touch a common land region ("island"). See PieceQuery.region. */
+  | { sameRegion: [string, string] };
 
 /* ------------------------------------------------------------------------ */
 /*  Effects                                                                  */
@@ -171,6 +203,14 @@ export interface LocationChoice {
  *  - Action effects get `piece` (location) and `pieceId` for piece actions; card effects get `card`.
  *  - choosePlayer without a filter offers every player except `self`. Empty option lists bind null
  *    and continue (use `{varSet}` to test); they never deadlock.
+ *  - PIECE IDS: `asId` on place / upgrade / downgrade / choosePiece / movePiece / forEachPiece binds the
+ *    piece INSTANCE id. Anywhere a location var is expected (`at`, `near`, `ownerOf`, `piece`...), a var
+ *    holding a piece instance id also works and means "that exact piece" / "where that piece is".
+ *  - chooseMany binds `as` to each picked item in turn while running `do` (a loop var), and `countAs`
+ *    (if given) to how many were picked.
+ *  - movePiece.path sees the next step as `at`, the previous location as `prev` and the connecting
+ *    location as `via` (the edge between two vertices, the vertex between two edges, the side between
+ *    two hexes).
  */
 export type Effect =
   /* --- control flow --- */
@@ -178,7 +218,10 @@ export type Effect =
   | { op: 'repeat'; times: Expr; do: Effect[]; as?: string }      // as = loop index var
   | { op: 'if'; cond: Condition; then: Effect[]; else?: Effect[] }
   | { op: 'forEachPlayer'; filter?: Condition; as: string; do: Effect[]; order?: 'turn' | 'simultaneous' }
-  | { op: 'forEachPiece'; query: PieceQuery; as: string; do: Effect[] }
+  | { op: 'forEachPiece'; query: PieceQuery; as: string; do: Effect[]; asId?: string }
+  /** Run `do` for every board location of `kind` passing `filter` (candidate bound as `as`), in board
+   *  order. E.g. reveal every hidden hex next to a ship: kind 'hex', filter isAdjacent [as, 'ship']. */
+  | { op: 'forEachLocation'; kind: LocationKind; as: string; do: Effect[]; filter?: Condition }
   | { op: 'chooseOption'; player?: PlayerRef; label?: string; options: { label: string; cond?: Condition; do: Effect[] }[] }
   | { op: 'setVar'; name: string; value: Expr }
   | { op: 'emit'; event: string; payload?: Record<string, Expr> } // fires custom triggers
@@ -189,7 +232,13 @@ export type Effect =
   | { op: 'choosePlayer'; player?: PlayerRef; as: string; filter?: Condition; label?: string; optional?: boolean }
   | { op: 'chooseResource'; player?: PlayerRef; as: string; options?: Id[]; kind?: ResourceKind; label?: string }
   | { op: 'chooseLocation'; player?: PlayerRef; as: string; kind: LocationKind; filter: Condition; label?: string; optional?: boolean }
-  | { op: 'choosePiece'; player?: PlayerRef; as: string; query: PieceQuery; filter?: Condition; label?: string; optional?: boolean }
+  | { op: 'choosePiece'; player?: PlayerRef; as: string; query: PieceQuery; filter?: Condition; label?: string; optional?: boolean; asId?: string }
+  /** Multi-select: `player` picks up to `count` DISTINCT items of one kind, one prompt at a time
+   *  (after `min` picks, default = count, they may stop). Then `do` runs once per picked item with `as`
+   *  bound to it. `of` picks players / locations (`kind`) / pieces (`query`, binds their location) /
+   *  resource types (`options`). `filter` sees the candidate as `as`. */
+  | { op: 'chooseMany'; of: 'player' | 'location' | 'piece' | 'resource'; player?: PlayerRef; count: Expr; min?: Expr; as: string; do: Effect[];
+      filter?: Condition; kind?: LocationKind; query?: PieceQuery; options?: Id[]; label?: string; countAs?: string }
 
   /* --- resources --- */
   | { op: 'gain'; player?: PlayerRef; resources: ResourceMap }     // from bank (limited by bank supply)
@@ -201,11 +250,36 @@ export type Effect =
   | { op: 'produce'; roll?: Expr; hex?: string; player?: PlayerRef } // run production for a number or one hex
 
   /* --- pieces & board --- */
-  | { op: 'place'; piece: Id; player?: PlayerRef; free?: boolean; ignoreConnection?: boolean; location?: LocationChoice; as?: string }
-  | { op: 'upgrade'; from: Id | Id[]; to: Id; player?: PlayerRef; free?: boolean; location?: LocationChoice; as?: string }
+  | { op: 'place'; piece: Id; player?: PlayerRef; free?: boolean; ignoreConnection?: boolean; location?: LocationChoice; as?: string; asId?: string }
+  | { op: 'upgrade'; from: Id | Id[]; to: Id; player?: PlayerRef; free?: boolean; location?: LocationChoice; as?: string; asId?: string }
+  /** Replace one of `player`'s pieces of a `from` type with a lesser `to` piece at the same spot (city ->
+   *  settlement). Free, ignores placement rules. `player` (default self) owns the piece and chooses it.
+   *  If `to` has no supply left the piece is simply removed. Fires `pieceDowngraded`. Cargo is kept. */
+  | { op: 'downgrade'; from: Id | Id[]; to: Id; player?: PlayerRef; location?: LocationChoice; as?: string; asId?: string }
   | { op: 'remove'; query: PieceQuery; location?: LocationChoice; returnToSupply?: boolean; as?: string }
-  | { op: 'movePiece'; query: PieceQuery; from?: LocationChoice; to?: LocationChoice }
+  /**
+   * Move a piece. `player` (default self) chooses the piece (from) and the destination (to); this may
+   * be another player, e.g. `{ownerOf: 'spot'}` to make a displaced knight's owner relocate it.
+   * Destinations must satisfy the piece's own placement rules for its owner (evaluated with the piece
+   * lifted off the board) unless `anywhere` is true, plus `to.where`.
+   * Range: with `maxSteps` the destination must be reachable in at most that many steps between
+   * neighbouring locations of the piece's kind, every step satisfying `path` (see binding conventions).
+   * `stepsAs` binds the steps used (for per-step costs / movement points). `as` binds the new location
+   * (null if nothing moved), `asId` the piece id. Cargo travels with the piece.
+   */
+  | { op: 'movePiece'; query: PieceQuery; from?: LocationChoice; to?: LocationChoice; player?: PlayerRef; anywhere?: boolean;
+      maxSteps?: Expr; path?: Condition; stepsAs?: string; as?: string; asId?: string }
   | { op: 'setPieceState'; at: string; key: string; value: Expr }  // e.g. knight active=1, strength=2
+  /** Move resource cards from a player's hand onto a piece (a wagon, a ship). 'choice' = the player
+   *  picks which resource. Moves at most what they hold. Cargo resources return to the bank if the
+   *  piece leaves the board. */
+  | { op: 'loadCargo'; piece: string; player?: PlayerRef; resource: ResourceRef | 'choice'; amount?: Expr }
+  /** Move resource cargo off a piece into a player's hand (`to`, default self; 'bank' = return it).
+   *  `resource` omitted / 'all' = every resource carried. `amount` omitted = all of it. */
+  | { op: 'unloadCargo'; piece: string; to?: PlayerRef; resource?: ResourceRef | 'all'; amount?: Expr }
+  /** Add (or with a negative amount, remove) abstract goods carried by a piece, e.g. a 'settler' on a
+   *  ship or 'spice' on a wagon. Not taken from anyone's hand. Never goes below 0. */
+  | { op: 'addCargo'; piece: string; key: Id; amount: Expr }
   | { op: 'moveToken'; token: Id; to?: LocationChoice; as?: string }
   | { op: 'setTerrain'; at: string; terrain: Id }                   // fog reveal, terraforming
   | { op: 'setHexNumber'; at: string; number: Expr | null }
@@ -253,7 +327,8 @@ export type BuiltinEvent =
   | 'gameStart' | 'setupComplete'
   | 'turnStart' | 'turnEnd' | 'roundEnd'
   | 'diceRolled' | 'production'
-  | 'piecePlaced' | 'pieceUpgraded' | 'pieceRemoved' | 'pieceMoved'
+  | 'piecePlaced' | 'pieceUpgraded' | 'pieceRemoved' | 'pieceMoved' | 'pieceDowngraded'
+  | 'playerProduction'
   | 'tokenMoved' | 'hexRevealed'
   | 'cardDrawn' | 'cardPlayed'
   | 'resourceGained' | 'resourceLost'
@@ -267,10 +342,14 @@ export const EVENT_PAYLOAD_VARS: Record<BuiltinEvent, string[]> = {
   roundEnd: [],
   diceRolled: ['total', 'player', 'die0', 'die1', 'event0'],   // dieN per numeric die, eventN per event die
   production: ['roll', 'hex'],                                  // roll = number rolled (null when one hex produced)
-  piecePlaced: ['piece', 'at', 'owner', 'player'],
-  pieceUpgraded: ['from', 'piece', 'at', 'owner', 'player'],
-  pieceRemoved: ['piece', 'at', 'owner', 'player'],
-  pieceMoved: ['piece', 'from', 'at', 'owner', 'player'],      // here `from` is the previous location
+  piecePlaced: ['piece', 'at', 'owner', 'player', 'pieceId'],
+  pieceUpgraded: ['from', 'piece', 'at', 'owner', 'player', 'pieceId'],
+  pieceRemoved: ['piece', 'at', 'owner', 'player', 'pieceId'],
+  pieceMoved: ['piece', 'from', 'at', 'owner', 'player', 'pieceId', 'steps'], // `from` = previous location; steps null without maxSteps
+  pieceDowngraded: ['from', 'piece', 'at', 'owner', 'player', 'pieceId'],    // piece = the new type (null if removed)
+  /** After every production run, once per player (turn order): amount = total resources received
+   *  (0 = nothing, e.g. for an "aqueduct" rule), including owed gold-field picks. */
+  playerProduction: ['player', 'amount', 'roll', 'hex'],
   tokenMoved: ['token', 'at', 'from', 'player'],               // `from` = previous location (or null)
   hexRevealed: ['at', 'terrain', 'player'],
   cardDrawn: ['card', 'deck', 'player'],
@@ -345,7 +424,8 @@ export interface PieceDef {
   /** If set, building this replaces a piece of one of these types at the same location. */
   upgradesFrom?: Id[];
   vp?: number;
-  /** Resource multiplier for production on adjacent hexes (settlement 1, city 2). */
+  /** Resource multiplier for production on adjacent hexes (settlement 1, city 2). Works for corner
+   *  pieces (3 hexes), edge pieces (the 2 hexes beside the edge) and hex pieces (that hex). */
   productionMultiplier?: number;
   /** Extra production rules (e.g. C&K city on forest also gives paper). */
   productionBonus?: { terrain: Id; gives: ResourceMap }[];
@@ -353,6 +433,11 @@ export interface PieceDef {
   network?: Id;               // e.g. 'roads' (roads + ships could share 'trade-route')
   /** Breaks other players' networks when placed on a vertex. Default true for vertex pieces. */
   breaksNetworks?: boolean;
+  /** For mixed networks (e.g. roads and ships sharing network 'route'): where a route may switch
+   *  between this piece type and a different piece type. 'anyVertex' (default) = anywhere;
+   *  'ownPiece' = only at a vertex holding one of the owner's pieces (Seafarers: road <-> ship only
+   *  via a settlement). Used by the longest-route metric; for placement use `connectedTo.via`. */
+  networkSwitchAt?: 'anyVertex' | 'ownPiece';
   tags?: string[];            // free-form, e.g. 'knight', 'building', 'ship'
   /** Initial per-piece state (knight strength, active...). */
   initialState?: Record<string, number>;
@@ -443,6 +528,10 @@ export interface AwardDef {
   min: number;
   /** Holder keeps it on ties (true for Longest Road / Largest Army). */
   holderKeepsOnTie?: boolean;
+  /** 'highest' (default): re-evaluated all the time; the holder loses it when no longer qualifying.
+   *  'keepUntilBeaten': once won, the holder keeps it (even if their own score drops, even below `min`)
+   *  until another player's score STRICTLY exceeds the holder's (C&K metropolis). */
+  mode?: 'highest' | 'keepUntilBeaten';
 }
 
 export interface PortDef {
@@ -610,6 +699,8 @@ export interface PieceInstance {
   owner: string;          // player id
   at: LocationId;
   state: Record<string, number>;
+  /** Goods carried by the piece (resource ids or free keys); see loadCargo / addCargo. */
+  cargo?: Record<Id, number>;
 }
 
 export interface CardInstance {

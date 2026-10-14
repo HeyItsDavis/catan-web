@@ -4,7 +4,7 @@
  * payloads, the implicit `at` of placement rules and location filters).
  */
 import type { Effect } from '../engine/schema';
-import { EFFECTS, EVENTS, effectSpec, type VarType } from './catalog';
+import { EFFECTS, EVENTS, effectSpec, type BlockSpec, type VarType } from './catalog';
 
 export interface VarInfo {
   name: string;
@@ -70,9 +70,18 @@ export function innerScope(e: Effect, paramName: string, scope: VarInfo[]): VarI
       extra.push({ name: rec[p.name] as string, type: p.binds ?? 'any', source: `${spec.label} loop` });
     }
   }
-  const cand = FILTER_CANDIDATE[e.op];
+  const cand = e.op === 'chooseMany'
+    ? ({ player: 'player', location: 'location', piece: 'location', resource: 'resource' } as const)[rec.of as 'player' | 'location' | 'piece' | 'resource']
+    : FILTER_CANDIDATE[e.op];
   if (cand && paramName === 'filter' && typeof rec.as === 'string' && rec.as) {
     extra.push({ name: rec.as, type: cand, source: 'The candidate being tested' });
+  }
+  if (e.op === 'movePiece' && paramName === 'path') {
+    extra.push(
+      { name: 'at', type: 'location', source: 'Next step' },
+      { name: 'prev', type: 'location', source: 'Previous step' },
+      { name: 'via', type: 'location', source: 'What connects the two steps' },
+    );
   }
   const target = spec.params.find(p => p.name === paramName);
   if (target?.kind === 'locationChoice') extra.push(AT_LOCATION);
@@ -100,6 +109,21 @@ export function actionScope(): VarInfo[] {
 /** CardDef.effect: `card` = the card id being played. */
 export function cardScope(): VarInfo[] {
   return [{ name: 'card', type: 'any', source: 'The card being played' }];
+}
+
+/** Loop vars declared by a condition / expr block (e.g. countPlayers `as`), visible to its own params. */
+export function loopVarsOf(spec: BlockSpec<unknown>, values: Record<string, unknown>): VarInfo[] {
+  return spec.params
+    .filter(p => p.kind === 'varName' && p.loopVar && typeof values[p.name] === 'string' && values[p.name])
+    .map(p => ({ name: values[p.name] as string, type: p.binds ?? 'any', source: spec.label }));
+}
+
+/** Vars visible inside a PieceQuery `where`: the candidate piece. */
+export function candidateScope(): VarInfo[] {
+  return [
+    { name: 'candidate', type: 'location', source: 'Candidate piece location' },
+    { name: 'candidateId', type: 'piece', source: 'Candidate piece' },
+  ];
 }
 
 export function eventScope(event: string): VarInfo[] {
