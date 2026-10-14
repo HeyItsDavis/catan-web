@@ -14,6 +14,8 @@ export interface GameScreenProps {
   /** `from` is the sender's display name. */
   chat: { from: string; text: string; at: number }[];
   sendChat: (t: string) => void;
+  /** Turn-timer deadline from the room host. */
+  timer?: { deadline: number | null; player: string | null };
 }
 
 function pick<P>(mod: Record<string, unknown>, name: string): ComponentType<P> {

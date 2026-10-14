@@ -67,12 +67,15 @@ export function DiceDisplay({ def, state }: { def: GameDefinition; state: GameSt
 
 /* --------------------------------- timer ---------------------------------- */
 
+/** Authoritative turn-timer deadline from the room host (epoch ms; null = no timer running). */
+export interface TimerInfo { deadline: number | null; player: string | null }
+
 /**
- * Client-side countdown. GameState has no turn-start timestamp, so this resets
- * whenever the turn / current player / phase changes as seen by this client.
+ * Countdown. With `timer` (from the host) it counts to the host's deadline for whoever must act;
+ * without it (dev harness) it is a client-side estimate that restarts when the turn changes.
  */
-export function TurnTimer({ state }: { state: GameState }) {
-  const total = state.settings.turnTimerSeconds;
+export function TurnTimer({ state, timer }: { state: GameState; timer?: TimerInfo }) {
+  const total = timer ? (timer.deadline ? 1 : 0) : state.settings.turnTimerSeconds;
   const key = `${state.turn}:${state.currentPlayerIndex}:${state.phase}`;
   const [start, setStart] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
@@ -89,11 +92,14 @@ export function TurnTimer({ state }: { state: GameState }) {
     return () => clearInterval(t);
   }, [total]);
   if (!total) return null;
-  const left = Math.max(0, Math.ceil(total - (now - start) / 1000));
+  const left = timer?.deadline
+    ? Math.max(0, Math.ceil((timer.deadline - now) / 1000))
+    : Math.max(0, Math.ceil(total - (now - start) / 1000));
   const mm = Math.floor(left / 60);
   const ss = String(left % 60).padStart(2, '0');
+  const who = timer?.player ? state.players.find((p) => p.id === timer.player)?.name : undefined;
   return (
-    <span className={`g-timer${left <= 10 ? ' g-timer--low' : ''}`} title="Turn timer">
+    <span className={`g-timer${left <= 10 ? ' g-timer--low' : ''}`} title={who ? `Time left for ${who}` : 'Turn timer'} role="timer">
       ⏱ {mm}:{ss}
     </span>
   );
@@ -109,7 +115,7 @@ const PHASE_LABEL: Record<string, string> = {
   gameOver: 'Game over',
 };
 
-export function TurnIndicator({ state, playerId }: { state: GameState; playerId: string }) {
+export function TurnIndicator({ state, playerId, timer }: { state: GameState; playerId: string; timer?: TimerInfo }) {
   const cur = state.players.find((p) => p.id === state.turnOrder[state.currentPlayerIndex]);
   const mine = cur?.id === playerId;
   return (
@@ -120,7 +126,7 @@ export function TurnIndicator({ state, playerId }: { state: GameState; playerId:
       <span className="g-turn-meta g-muted g-small">
         Turn {state.turn} · {PHASE_LABEL[state.phase] ?? state.phase}
       </span>
-      <TurnTimer state={state} />
+      <TurnTimer state={state} timer={timer} />
     </div>
   );
 }

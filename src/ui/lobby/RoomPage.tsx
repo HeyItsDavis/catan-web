@@ -76,7 +76,6 @@ function GameView({ room }: { room: RoomView }) {
   );
   return (
     <div className="game-wrap">
-      <TurnTimer deadline={snapshot.timer.deadline} player={snapshot.players.find((p) => p.id === snapshot.timer.player)?.name ?? null} />
       <GameScreen
         def={room.def!}
         state={snapshot.game!}
@@ -84,23 +83,8 @@ function GameView({ room }: { room: RoomView }) {
         send={room.send}
         chat={chat}
         sendChat={room.sendChat}
+        timer={snapshot.timer}
       />
-    </div>
-  );
-}
-
-function TurnTimer({ deadline, player }: { deadline: number | null; player: string | null }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!deadline) return;
-    const id = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(id);
-  }, [deadline]);
-  if (!deadline) return null;
-  const left = Math.max(0, Math.ceil((deadline - now) / 1000));
-  return (
-    <div className={`turn-timer ${left <= 10 ? 'urgent' : ''}`} role="timer">
-      ⏱ {player ? `${player}: ` : ''}{Math.floor(left / 60)}:{String(left % 60).padStart(2, '0')}
     </div>
   );
 }

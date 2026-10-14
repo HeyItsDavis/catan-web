@@ -12,9 +12,16 @@ test('dev cards, city, chat and the end of the game', async ({ browser }) => {
   const guest = await newPlayer(browser, 'Bob');
   await createRoom(host);
   await joinViaLink(guest, await copyInviteLink(host));
+  await host.page.locator('.setting-row', { hasText: 'Turn timer' }).locator('select').selectOption('180');
+  await expect(guest.page.locator('.setting-row', { hasText: 'Turn timer' })).toContainText('180s');
   await guest.page.getByRole('button', { name: "I'm ready" }).click();
   await host.page.getByRole('button', { name: 'Start game' }).click();
   await expect(guest.page.locator('.g-root')).toBeVisible();
+  // One host-driven countdown per screen.
+  for (const p of [host, guest]) {
+    await expect(p.page.getByRole('timer')).toHaveCount(1);
+    await expect(p.page.getByRole('timer')).toHaveText(/[23]:\d\d/);
+  }
 
   const g0 = await hostGame(host);
   const id: Record<string, string> = Object.fromEntries(g0.players.map((p) => [p.name, p.id]));

@@ -56,20 +56,6 @@
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } }
 
 .game-wrap { position: relative; min-height: 100%; }
-.turn-timer {
-  position: fixed;
-  top: 0.6rem;
-  right: 0.6rem;
-  z-index: 50;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.25rem 0.8rem;
-  font-family: var(--mono);
-  font-weight: 700;
-  box-shadow: var(--shadow);
-}
-.turn-timer.urgent { border-color: var(--danger); color: var(--danger); }
 
 /* Editor route: shared top bar + the editor filling the rest of the viewport. */
 .app-editor { height: 100%; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }

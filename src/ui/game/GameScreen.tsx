@@ -8,7 +8,7 @@ import type { Command, GameDefinition, GameState } from '../../engine/schema';
 import { ActionBar } from './ActionBar';
 import { Board, type BoardPick } from './Board';
 import { useEngine } from './engineContext';
-import { BankDisplay, DiceDisplay, GameOverOverlay, LogChatTabs, TurnIndicator } from './Info';
+import { BankDisplay, DiceDisplay, GameOverOverlay, LogChatTabs, TurnIndicator, type TimerInfo } from './Info';
 import { OpponentsPanel, SelfPanel } from './Players';
 import { PromptPanel, WaitingFor } from './PromptPanel';
 import { TradeDialog, TradeOffers } from './Trade';
@@ -21,9 +21,11 @@ export interface GameScreenProps {
   send: (c: Command) => void;
   chat: { from: string; text: string; at: number }[];
   sendChat: (t: string) => void;
+  /** Turn-timer deadline from the room host (omit for a client-side estimate). */
+  timer?: TimerInfo;
 }
 
-export function GameScreen({ def, state, playerId, send, chat, sendChat }: GameScreenProps) {
+export function GameScreen({ def, state, playerId, send, chat, sendChat, timer }: GameScreenProps) {
   const engine = useEngine();
   const moves = useMemo(() => engine.getAvailableMoves(def, state, playerId), [engine, def, state, playerId]);
   const [tradeOpen, setTradeOpen] = useState(false);
@@ -55,7 +57,7 @@ export function GameScreen({ def, state, playerId, send, chat, sendChat }: GameS
   return (
     <div className="g-root">
       <header className="g-top">
-        <TurnIndicator state={state} playerId={playerId} />
+        <TurnIndicator state={state} playerId={playerId} timer={timer} />
         <DiceDisplay def={def} state={state} />
         <BankDisplay def={def} state={state} />
       </header>
