@@ -45,9 +45,13 @@ test('host leaves, resumes from the home page; late joiner and kick', async ({ b
     host.page.on('dialog', (d) => void d.accept());
   });
 
-  await test.step('host kicks a third player; they see why', async () => {
+  await test.step('host kicks a third player (who joined by typing the code); they see why', async () => {
     const carol = await newPlayer(browser, 'Carol');
-    await joinViaLink(carol, link);
+    await carol.page.goto('./');
+    await carol.page.getByLabel('Your name').fill('Carol');
+    await carol.page.getByLabel('Room code or invite link').fill(code.toLowerCase());
+    await carol.page.getByRole('button', { name: 'Join', exact: true }).click();
+    await expect(carol.page.getByRole('heading', { name: /Players/ })).toBeVisible({ timeout: 60_000 });
     await expect(host.page.locator('.player-row', { hasText: 'Carol' })).toBeVisible();
     await host.page.locator('.player-row', { hasText: 'Carol' }).locator('button[title^="Kick"]').click();
     await expect(carol.page.getByRole('heading', { name: 'Removed from room' })).toBeVisible();
@@ -67,4 +71,16 @@ test('host leaves, resumes from the home page; late joiner and kick', async ({ b
     await expect(dave.page.locator('main')).toContainText('Game already in progress');
     await dave.ctx.close();
   });
+});
+
+test('host closes the room: guests are told and stop reconnecting', async ({ browser }) => {
+  const host = await newPlayer(browser, 'Ada');
+  const guest = await newPlayer(browser, 'Bob');
+  await createRoom(host);
+  await joinViaLink(guest, await copyInviteLink(host));
+  // confirm() -> OK = close the room for everyone (newPlayer auto-accepts dialogs)
+  await host.page.getByRole('button', { name: 'Leave' }).click();
+  await expect(host.page.getByRole('button', { name: 'Create room' })).toBeVisible();
+  await expect(host.page.getByRole('button', { name: /Resume room/ })).toHaveCount(0);
+  await expect(guest.page.getByRole('heading', { name: 'Room closed' })).toBeVisible();
 });

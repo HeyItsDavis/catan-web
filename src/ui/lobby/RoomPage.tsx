@@ -28,7 +28,7 @@ function Room({ code }: { code: string }) {
 
   if (status === 'kicked') {
     return (
-      <CenterCard title="Removed from room">
+      <CenterCard title={/closed/i.test(snapshot.error?.message ?? '') ? 'Room closed' : 'Removed from room'}>
         <p className="muted">{snapshot.error?.message ?? 'The host removed you from this room.'}</p>
         <a className="btn primary" href="#/">Go home</a>
       </CenterCard>
