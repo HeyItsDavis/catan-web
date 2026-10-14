@@ -69,7 +69,8 @@ export type Pending =
   | { k: 'bind'; prompt: string; sc: string; var: string; then?: IEffect[]; always?: boolean }
   | { k: 'option'; prompt: string; sc: string; branches: IEffect[][] }
   | { k: 'discard'; prompt: string; player: string; kind?: string }
-  | { k: 'discardCard'; prompt: string; player: string };
+  | { k: 'discardCard'; prompt: string; player: string }
+  | { k: 'takeCard'; prompt: string; from: string; to: string };
 
 export interface Thread {
   id: string;
@@ -182,6 +183,8 @@ function raise(ctx: Ctx, th: Thread, p: Omit<Prompt, 'id'>, pending: Distributiv
   if (prompt.piece === undefined) delete prompt.piece;
   if (prompt.amount === undefined) delete prompt.amount;
   if (prompt.optional === undefined) delete prompt.optional;
+  if (prompt.pieceId === undefined) delete prompt.pieceId;
+  if (prompt.progress === undefined) delete prompt.progress;
   ctx.s.prompts.push(prompt);
   th.pending = { ...pending, prompt: id } as Pending;
 }
@@ -691,7 +694,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
         const pv = tmpVar(ctx);
         env.vars[pv] = pc.id;
         const v = tmpVar(ctx);
-        raise(ctx, th, { player: who, kind: 'location', label: eff.to?.label ?? 'Move to', options: [...dests.keys()], piece: pc.type },
+        raise(ctx, th, { player: who, kind: 'location', label: eff.to?.label ?? 'Move to', options: [...dests.keys()], piece: pc.type, pieceId: pc.id },
           { k: 'bind', sc, var: v, then: [{ ...eff, from: { ...eff.from, at: pv }, to: { ...eff.to, at: v }, $dist: Object.fromEntries(dests) }] });
         return;
       }
@@ -861,6 +864,23 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       discardCardInstance(ctx, p.id, cands[0].id);
       return;
     }
+    case 'takeCard': {
+      const from = findPlayer(ctx, P(eff.from, 'self'));
+      const to = findPlayer(ctx, P(eff.to));
+      if (!from || !to || from.id === to.id) return;
+      const cands = from.hand.filter((c) => eff.deck === undefined || c.deck === eff.deck);
+      if (!cands.length) { log(ctx, `${from.name} has no card to take`, to.id); return; }
+      if (eff.choose && cands.length > 1) {
+        raise(ctx, th, {
+          player: to.id, kind: 'card', label: `Choose a card to take from ${from.name}`, options: cands.map((c) => c.id),
+          optionLabels: cands.map((c) => ctx.L.cards.get(c.card)?.name ?? c.card),
+        }, { k: 'takeCard', from: from.id, to: to.id });
+        return;
+      }
+      const inst = eff.choose ? cands[0] : cands[randInt(rng(ctx), 0, cands.length - 1)];
+      moveCardInstance(ctx, th, from.id, to.id, inst.id);
+      return;
+    }
     case 'shuffleDeck': {
       const d = s.decks[eff.deck];
       if (!d) return;
@@ -905,7 +925,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
     }
 
     /* ---------------- turn flow ---------------- */
-    case 'rollDice': doRoll(ctx); return;
+    case 'rollDice': doRoll(ctx, eff.values?.map((v) => evalExpr(ctx, env, v))); return;
     case 'extraBuildPhase': {
       s.specialBuild = { queue: playersFrom(ctx).slice(1), turnPlayerIndex: s.currentPlayerIndex };
       return;
@@ -951,6 +971,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       raise(ctx, th, {
         player: who, kind, label: `${base.label ?? `Choose a ${base.of}`} (${picked.length + 1}/${eff.n})`, options: opts, optionLabels,
         optional: picked.length >= eff.m ? true : undefined,
+        progress: { picked: picked.length, max: eff.n, min: eff.m, chosen: [...picked] },
       }, { k: 'bind', sc, var: v, always: true, then: [{ ...eff, picked, pickVar: v }] });
       return;
     }
@@ -1119,6 +1140,20 @@ function afterAcquire(ctx: Ctx, th: Thread, pid: string, inst: CardInstance, ski
   }
 }
 
+/** takeCard: move one card instance between hands; the receiver acquires it now (cardDrawn, hand limit). */
+function moveCardInstance(ctx: Ctx, th: Thread, fromId: string, toId: string, instId: string): void {
+  const from = getPlayer(ctx, fromId);
+  const to = getPlayer(ctx, toId);
+  const inst = from.hand.find((c) => c.id === instId);
+  if (!inst) return;
+  from.hand = from.hand.filter((c) => c.id !== instId);
+  const moved: CardInstance = { ...inst, acquiredTurn: ctx.s.turn };
+  to.hand.push(moved);
+  log(ctx, `${to.name} takes a card from ${from.name}`, to.id);
+  emit(ctx, 'cardDrawn', { card: moved.card, deck: moved.deck, player: to.id }, to.id);
+  afterAcquire(ctx, th, to.id, moved);
+}
+
 export function discardCardInstance(ctx: Ctx, pid: string, instId: string): void {
   const p = getPlayer(ctx, pid);
   const inst = p.hand.find((c) => c.id === instId);
@@ -1181,6 +1216,8 @@ export function respond(ctx: Ctx, pid: string, promptId: string, answer: unknown
       if (val !== null) pushBlock(th, pending.sc, pending.branches[Number(val)] ?? []);
     } else if (pending.k === 'discardCard') {
       if (val !== null) discardCardInstance(ctx, pending.player, val);
+    } else if (pending.k === 'takeCard') {
+      if (val !== null) moveCardInstance(ctx, th, pending.from, pending.to, val);
     }
   }
   ctx.s.prompts = ctx.s.prompts.filter((p) => p.id !== promptId);

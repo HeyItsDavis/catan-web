@@ -4,8 +4,41 @@
  */
 import { useState } from 'react';
 import type { Command, GameDefinition, GameState, Prompt } from '../../engine/schema';
+import { Icon } from '../shared/icons';
 import { PlayerName, ResChip } from './chips';
+import { promptLabel } from './display';
 import { byId, HIDDEN_KEY, sumMap } from './util';
+
+/** "Pick up to 3 · 1 chosen" for multi-select prompts. */
+export function ProgressPill({ prompt }: { prompt: Prompt }) {
+  const pr = prompt.progress;
+  if (!pr) return null;
+  const range = pr.min >= pr.max ? `Pick ${pr.max}` : pr.min > 0 ? `Pick ${pr.min}–${pr.max}` : `Pick up to ${pr.max}`;
+  const need = pr.picked < pr.min ? ` · ${pr.min - pr.picked} more needed` : '';
+  return (
+    <span className="g-progress" aria-label="Selection progress">
+      {range} · <b>{pr.picked}</b> chosen{need}
+      <span className="g-progress-dots" aria-hidden>
+        {Array.from({ length: Math.min(pr.max, 12) }, (_, i) => (
+          <i key={i} className={i < pr.picked ? 'on' : i < pr.min ? 'need' : ''} />
+        ))}
+      </span>
+    </span>
+  );
+}
+
+/** Banner while the player picks which piece performs a piece action. */
+export function PieceActionBanner({ def, actionId, count, onCancel }: { def: GameDefinition; actionId: string; count: number; onCancel: () => void }) {
+  const a = byId(def.actions, actionId);
+  return (
+    <div className="g-prompt-banner" role="status">
+      <span className="g-prompt-pulse" />
+      {a?.icon && <Icon name={a.icon} label={a.name} size={18} fill="#fff" />}
+      <span>{a?.name ?? actionId}: choose one of your {count} pieces</span>
+      <button type="button" className="g-btn g-btn--sm" onClick={onCancel}>Cancel</button>
+    </div>
+  );
+}
 
 /** Prompt may carry human labels for 'option' prompts (proposed additive schema field). */
 type PromptWithLabels = Prompt & { optionLabels?: string[] };
@@ -22,19 +55,36 @@ export function PromptPanel({ def, state, playerId, prompt, send }: Props) {
   const respond = (answer: Extract<Command, { type: 'respond' }>['answer']) =>
     send({ type: 'respond', promptId: prompt.id, answer });
 
+  // Multi-select prompts become optional once enough is picked: answering null = "done".
+  const done = !!prompt.progress && prompt.progress.picked > 0;
   const skip = prompt.optional ? (
-    <button type="button" className="g-btn g-btn--ghost" onClick={() => respond(null)}>
-      Skip
+    <button type="button" className={done ? 'g-btn g-btn--primary g-btn--sm' : 'g-btn g-btn--ghost'} onClick={() => respond(null)}>
+      {done ? `Done (${prompt.progress!.picked})` : 'Skip'}
     </button>
   ) : null;
 
   const me = state.players.find((p) => p.id === playerId);
+  const label = promptLabel(prompt);
+  const chosen = new Set(prompt.progress?.chosen ?? []);
 
   if (prompt.kind === 'location' || prompt.kind === 'piece') {
+    const moving = prompt.pieceId ? state.pieces.find((p) => p.id === prompt.pieceId) : undefined;
+    const movingDef = byId(def.pieces, moving?.type);
+    const movingOwner = state.players.find((p) => p.id === moving?.owner);
     return (
-      <div className="g-prompt-banner" role="status">
+      <div className={`g-prompt-banner${moving ? ' g-prompt-banner--move' : ''}`} role="status">
         <span className="g-prompt-pulse" />
-        <span>{prompt.label || (prompt.kind === 'piece' ? 'Choose a piece on the board' : 'Choose a location on the board')}</span>
+        {moving && (
+          <span className="g-moving-chip" title="Piece being moved">
+            <Icon name={movingDef?.icon ?? moving.type} label={movingDef?.name} size={18} fill={movingOwner?.color ?? '#aaa'} />
+            {movingDef?.name ?? moving.type}
+          </span>
+        )}
+        <span>{label || (prompt.kind === 'piece' ? 'Choose a piece on the board' : moving ? 'Choose where to move' : 'Choose a location on the board')}</span>
+        {moving && prompt.options.length > 0 && (
+          <span className="g-muted g-small">{prompt.options.length} reachable spot{prompt.options.length === 1 ? '' : 's'}</span>
+        )}
+        <ProgressPill prompt={prompt} />
         {prompt.options.length === 0 && <span className="g-muted">(no legal options)</span>}
         {prompt.kind === 'piece' &&
           prompt.options.map((pid) => {
@@ -86,12 +136,24 @@ export function PromptPanel({ def, state, playerId, prompt, send }: Props) {
     case 'card':
       body = (
         <div className="g-choice-grid">
-          {prompt.options.map((cid) => {
-            const inst = me?.hand.find((c) => c.id === cid) ?? me?.played.find((c) => c.id === cid);
-            const card = byId(def.cards, inst?.card ?? cid);
+          {prompt.options.map((cid, i) => {
+            // Options are card instance ids, possibly from ANOTHER player's hand (take a card).
+            const owner = state.players.find((p) => p.hand.some((c) => c.id === cid) || p.played.some((c) => c.id === cid));
+            const inst = owner?.hand.find((c) => c.id === cid) ?? owner?.played.find((c) => c.id === cid);
+            const card = byId(def.cards, inst?.card) ?? (inst ? undefined : byId(def.cards, cid));
+            const deck = byId(def.decks, inst?.deck);
+            const name = card?.name ?? prompt.optionLabels?.[i] ?? 'Hidden card';
             return (
-              <button key={cid} type="button" className="g-choice" onClick={() => respond(cid)} title={card?.description}>
-                <b>{card?.name ?? cid}</b>
+              <button
+                key={cid}
+                type="button"
+                className="g-choice g-choice--card"
+                style={deck?.color ? { borderTopColor: deck.color } : undefined}
+                onClick={() => respond(cid)}
+                title={[card?.description, deck?.name].filter(Boolean).join(' — ')}
+              >
+                <b>{name}</b>
+                {owner && owner.id !== playerId && <span className="g-muted g-small">from {owner.name}</span>}
                 {card?.description && <span className="g-muted g-small">{card.description}</span>}
               </button>
             );
@@ -119,8 +181,24 @@ export function PromptPanel({ def, state, playerId, prompt, send }: Props) {
 
   return (
     <div className="g-modal-backdrop">
-      <div className="g-modal" role="dialog" aria-label={prompt.label}>
-        <h3>{prompt.label || 'Make a choice'}</h3>
+      <div className="g-modal" role="dialog" aria-label={label}>
+        <h3>{label || 'Make a choice'}</h3>
+        {prompt.progress && (
+          <div className="g-modal-progress">
+            <ProgressPill prompt={prompt} />
+            {chosen.size > 0 && (
+              <div className="g-chosen-list">
+                <span className="g-muted g-small">Chosen:</span>
+                {[...chosen].map((c) => {
+                  const pl = state.players.find((p) => p.id === c);
+                  if (pl) return <PlayerName key={c} p={pl} />;
+                  if (byId(def.resources, c)) return <ResChip key={c} def={def} id={c} small />;
+                  return <span key={c} className="g-tag">{c}</span>;
+                })}
+              </div>
+            )}
+          </div>
+        )}
         {body}
         {skip && <div className="g-modal-foot">{skip}</div>}
       </div>

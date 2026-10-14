@@ -69,6 +69,16 @@ describe('editor UI smoke', () => {
 
   it('renders the rules tab', () => {
     expect(render(ctx, <RulesTab mod={mod} onChange={() => {}} />)).toContain('Setup rounds');
+    const withHints: ModDef = { ...mod, display: { globals: [{ key: 'b', max: 7 }], stats: [{ key: 's' }], eventFaces: [{ face: 'a', color: '#123456' }] } };
+    expect(render(ctxFor(withHints), <RulesTab mod={withHints} onChange={() => {}} />)).toContain('Game screen display');
+  });
+
+  it('renders piece display hints (state badges, cargo)', () => {
+    const m: ModDef = { ...mod, pieces: [{ id: 'k', name: 'K', supply: 1, placement: { on: 'vertex', where: true }, initialState: { strength: 1 },
+      display: { stateBadges: [{ key: 'strength', style: 'pips', max: 3 }], showCargo: false } }] };
+    const html = render(ctxFor(m), <CollectionTab k="pieces" mod={m} onChange={() => {}} selected={0} onSelect={() => {}} />);
+    expect(html).toContain('State badge');
+    expect(html).toContain('On the board');
   });
 
   it('renders every effect block with a plain-language preview', () => {

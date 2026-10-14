@@ -5,6 +5,7 @@
  */
 import * as engine from '../engine/index';
 import type { CollectionKey, GameDefinition, ModDef } from '../engine/schema';
+import { mergeDisplay } from '../engine/merge';
 
 export const COLLECTION_KEYS: CollectionKey[] = [
   'resources', 'terrains', 'pieces', 'cards', 'decks', 'actions',
@@ -61,6 +62,9 @@ export function mergeMods(mods: ModDef[]): GameDefinition {
     if (mod.trade) def.trade = { ...def.trade, ...mod.trade, bankRates: { ...def.trade.bankRates, ...(mod.trade.bankRates ?? {}) } };
     if (typeof mod.victoryPoints === 'number') def.victoryPoints = mod.victoryPoints;
     if (typeof mod.discardLimit === 'number') def.discardLimit = mod.discardLimit;
+    if (mod.display && typeof mod.display === 'object') {
+      try { def.display = mergeDisplay(def.display, mod.display); } catch { /* malformed hints: ignore */ }
+    }
   }
   return def;
 }

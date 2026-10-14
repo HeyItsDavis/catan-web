@@ -174,7 +174,11 @@ export type Condition =
   | { sameRegion: [string, string] }
   /** The location touches a harbor (port): a corner is one of the port's two corners, an edge is the
    *  port's coast edge, a hex is the port's sea hex. `port` limits it to one port type (e.g. 'port-any'). */
-  | { atPort: { at: string; port?: Id } };
+  | { atPort: { at: string; port?: Id } }
+  /** The location touches a hex that the map marks with this tag (MapDef hex `tags`): a hex tests itself,
+   *  a vertex/edge tests ANY touching on-board hex. E.g. Seafarers: no starting settlement on an island the
+   *  map tags 'foreign': `{not: {hexTag: {at: 'at', tag: 'foreign'}}}`. */
+  | { hexTag: { at: string; tag: string } };
 
 /* ------------------------------------------------------------------------ */
 /*  Effects                                                                  */
@@ -299,6 +303,10 @@ export type Effect =
   | { op: 'giveCard'; card: Id; player?: PlayerRef }                 // from supply, not a deck
   | { op: 'discardCard'; player?: PlayerRef; card?: Id; choose?: boolean }
   | { op: 'shuffleDeck'; deck: Id }
+  /** Move a card from `from`'s hand into `to`'s hand (default self), optionally only cards of one deck.
+   *  `choose: true` = `to` looks at the eligible cards and picks one (C&K Spy); otherwise random.
+   *  The receiver gets it as a newly acquired card: `cardDrawn` fires for them and hand limits apply. */
+  | { op: 'takeCard'; from: PlayerRef; to?: PlayerRef; deck?: Id; choose?: boolean }
 
   /* --- scoring, stats & state --- */
   | { op: 'addVP'; player?: PlayerRef; amount: Expr; reason?: string } // permanent "tokens" VP
@@ -310,7 +318,9 @@ export type Effect =
   | { op: 'grantTradeRate'; player?: PlayerRef; resource: ResourceRef | 'any'; ratio: number; until?: 'endOfTurn' | 'forever' }
 
   /* --- turn flow --- */
-  | { op: 'rollDice' }
+  /** Roll the dice. `values` fixes the numeric dice (one Expr per die, in order; a missing entry is
+   *  rolled; results are clamped to 1..sides), e.g. C&K Alchemist. Event dice always roll randomly. */
+  | { op: 'rollDice'; values?: Expr[] }
   | { op: 'extraBuildPhase' }      // 5-6 player special building phase
   | { op: 'endTurn' }
   | { op: 'win'; player?: PlayerRef };
@@ -361,7 +371,7 @@ export const EVENT_PAYLOAD_VARS: Record<BuiltinEvent, string[]> = {
   playerProduction: ['player', 'amount', 'roll', 'hex'],
   tokenMoved: ['token', 'at', 'from', 'player'],               // `from` = previous location (or null)
   hexRevealed: ['at', 'terrain', 'player'],
-  cardDrawn: ['card', 'deck', 'player'],
+  cardDrawn: ['card', 'deck', 'player'],                       // also fired by giveCard / takeCard
   cardPlayed: ['card', 'deck', 'player'],
   resourceGained: ['player', 'resource', 'amount'],
   resourceLost: ['player', 'resource', 'amount'],
@@ -454,6 +464,21 @@ export interface PieceDef {
   pieceActions?: Id[];
   /** Triggers attached to this piece type. */
   triggers?: TriggerDef[];
+  /** Optional presentation hints for the game UI (the engine ignores them). */
+  display?: PieceDisplay;
+}
+
+/**
+ * How the game UI draws a piece's numeric state (PieceInstance.state) and cargo.
+ *  - 'pips'   = one dot per point (knight strength), up to `max` (default 3)
+ *  - 'number' = a small numbered badge
+ *  - 'toggle' = on/off: the piece is drawn dimmed while the value is 0 (inactive knight)
+ * Without `stateBadges` the UI shows non-zero state values as small numbered badges.
+ */
+export interface PieceDisplay {
+  stateBadges?: { key: string; label?: string; icon?: string; style?: 'pips' | 'number' | 'toggle'; max?: number }[];
+  /** Draw cargo chips next to the piece (default true). */
+  showCargo?: boolean;
 }
 
 export interface CardDef {
@@ -577,6 +602,22 @@ export interface TradeRules {
   onlyCurrentPlayer: boolean;
 }
 
+/**
+ * Optional presentation hints for the game UI. The engine ignores them. Merged by key across mods
+ * (same key = replace, new key = add).
+ */
+export interface DisplayHints {
+  /** How to show `GameState.globals` counters (e.g. the barbarian track). `max` draws a progress
+   *  track; `hidden` keeps an internal counter out of the info panel. Unlisted globals are shown
+   *  with a humanized key. */
+  globals?: { key: string; label?: string; max?: number; icon?: string; color?: string; hidden?: boolean }[];
+  /** Labels for per-player stats (PlayerState.stats). `hidden` hides internal counters; `max` shows
+   *  the value as a pip track (e.g. a city-improvement level 0..5). */
+  stats?: { key: string; label?: string; icon?: string; hidden?: boolean; max?: number }[];
+  /** Label / colour / icon for event-die faces (DiceDef.eventDice faces). */
+  eventFaces?: { face: string; label?: string; color?: string; icon?: string }[];
+}
+
 /** Declares a lobby setting the mod exposes; readable via {param} / {setting}. */
 export interface SettingDef {
   id: Id;
@@ -595,7 +636,10 @@ export interface MapDef {
   minPlayers: number;
   maxPlayers: number;
   /** Fixed hexes. `terrain` may be a bag name prefixed with '@' to draw randomly. */
-  hexes: { q: number; r: number; terrain: Id; number?: number | '@'; port?: { port: Id | '@'; side: number } }[];
+  /** `hidden`: the hex starts face-down (fog) whatever its terrain, until a `revealHex`.
+   *  `tags`: free-form marks copied to HexState.tags and tested with the `hexTag` condition
+   *  (e.g. 'foreign' islands where players may not start). */
+  hexes: { q: number; r: number; terrain: Id; number?: number | '@'; port?: { port: Id | '@'; side: number }; hidden?: boolean; tags?: string[] }[];
   /** Bags used for random terrain and number assignment. */
   terrainBags?: Record<string, Id[]>;
   numberBag?: number[];
@@ -640,6 +684,8 @@ export interface ModDef {
   /** Discard limit on 7 (lobby can override). */
   discardLimit?: number;
   remove?: Partial<Record<CollectionKey, Id[]>>;
+  /** UI presentation hints (globals, stats, event-die faces). */
+  display?: DisplayHints;
 }
 
 export type CollectionKey =
@@ -666,6 +712,8 @@ export interface GameDefinition {
   trade: TradeRules;
   victoryPoints: number;
   discardLimit: number;
+  /** Merged UI presentation hints (optional; absent when no mod declares any). */
+  display?: DisplayHints;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -740,6 +788,8 @@ export interface HexState {
   terrain: Id;
   number: number | null;
   revealed: boolean;
+  /** Marks from the map (MapDef hex `tags`), tested by the `hexTag` condition. */
+  tags?: string[];
 }
 
 export interface PortInstance {
@@ -764,6 +814,12 @@ export interface Prompt {
   optionLabels?: string[];
   /** Piece being placed/moved, for UI previews of location prompts. */
   piece?: Id;
+  /** Movement prompts (movePiece destination): the instance id of the piece being moved.
+   *  Its options are the reachable destinations. */
+  pieceId?: string;
+  /** Multi-select prompts (chooseMany): `picked` so far (ids in `chosen`), at most `max`; the prompt is
+   *  optional ("done") once picked >= min. */
+  progress?: { picked: number; max: number; min: number; chosen?: string[] };
 }
 
 export interface TradeOffer {

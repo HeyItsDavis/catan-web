@@ -20,7 +20,7 @@ const EFFECT_OPS = new Set([
   'gain', 'pay', 'transfer', 'steal', 'discard', 'chooseAndGain', 'produce',
   'place', 'upgrade', 'downgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'removeToken', 'setTerrain', 'setHexNumber', 'revealHex',
   'loadCargo', 'unloadCargo', 'addCargo',
-  'drawCard', 'giveCard', 'discardCard', 'shuffleDeck',
+  'drawCard', 'giveCard', 'discardCard', 'takeCard', 'shuffleDeck',
   'addVP', 'addStat', 'setStat', 'addGlobal', 'setGlobal', 'setFlag', 'grantTradeRate',
   'rollDice', 'extraBuildPhase', 'endTurn', 'win',
 ]);
@@ -28,7 +28,7 @@ const EFFECT_OPS = new Set([
 const COND_KEYS = [
   'all', 'any', 'not', 'cmp', 'canAfford', 'isTurnOf', 'phase', 'hasRolled', 'flag', 'setting', 'samePlayer', 'varSet', 'varIs',
   'terrainIs', 'isWater', 'isCoastal', 'occupied', 'adjacentTo', 'connectedTo', 'distanceRule', 'hasToken', 'hexNumberIn',
-  'isAdjacent', 'isNetworkEnd', 'sameRegion', 'atPort',
+  'isAdjacent', 'isNetworkEnd', 'sameRegion', 'atPort', 'hexTag',
 ];
 const EXPR_KEYS = [
   'var', 'param', 'add', 'sub', 'mul', 'div', 'min', 'max', 'if', 'random', 'resourceCount', 'pieceCount', 'cardCount',
@@ -204,6 +204,12 @@ class Validator {
         break;
       }
       case 'isWater': case 'isCoastal': case 'distanceRule': case 'hexNumberIn': at(x[k] as { at: string }, `${path}.${k}`); break;
+      case 'hexTag': {
+        const q = x.hexTag as { at: string; tag: string };
+        at(q, `${path}.hexTag`);
+        if (typeof q?.tag !== 'string' || !q.tag) this.err(`${path}.hexTag.tag`, 'Needs a tag name');
+        break;
+      }
       case 'occupied': case 'adjacentTo': {
         const q = x[k] as { at: string; piece?: string | string[]; owner?: PlayerRef | 'any' | 'others' };
         at(q, `${path}.${k}`);
@@ -357,7 +363,11 @@ class Validator {
       case 'giveCard': this.ref(`${path}.card`, 'cards', e.card, 'card'); this.player(`${path}.player`, e.player, sc); break;
       case 'discardCard':
         if (e.card !== undefined) this.ref(`${path}.card`, 'cards', e.card, 'card'); this.player(`${path}.player`, e.player, sc); break;
+      case 'takeCard':
+        this.player(`${path}.from`, e.from, sc); this.player(`${path}.to`, e.to, sc);
+        if (e.deck !== undefined) this.ref(`${path}.deck`, 'decks', e.deck, 'deck'); break;
       case 'shuffleDeck': this.ref(`${path}.deck`, 'decks', e.deck, 'deck'); break;
+      case 'rollDice': (e.values ?? []).forEach((v, i) => this.expr(`${path}.values[${i}]`, v, sc)); break;
       case 'addVP': case 'addStat': this.player(`${path}.player`, e.player, sc); this.expr(`${path}.amount`, e.amount, sc); break;
       case 'setStat': this.player(`${path}.player`, e.player, sc); this.expr(`${path}.value`, e.value, sc); break;
       case 'addGlobal': this.expr(`${path}.amount`, e.amount, sc); break;

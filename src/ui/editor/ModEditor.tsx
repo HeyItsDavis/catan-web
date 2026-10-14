@@ -29,7 +29,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'rules', label: 'Rules' },
   { key: 'json', label: 'JSON' },
 ];
-const RULE_KEYS = new Set(['victoryPoints', 'discardLimit', 'setup', 'trade', 'dice']);
+const RULE_KEYS = new Set(['victoryPoints', 'discardLimit', 'setup', 'trade', 'dice', 'display']);
 const CURRENT_KEY = 'catanweb:editor:current';
 
 function newMod(library: ModDef[]): ModDef {
@@ -458,7 +458,7 @@ function OverviewTab(props: {
               </button>
             );
           })}
-          <button type="button" className={`me-summary-item${['victoryPoints', 'discardLimit', 'setup', 'trade', 'dice'].some(k => (mod as unknown as Record<string, unknown>)[k] !== undefined) ? ' on' : ''}`} onClick={() => props.goTo('rules')}>
+          <button type="button" className={`me-summary-item${['victoryPoints', 'discardLimit', 'setup', 'trade', 'dice', 'display'].some(k => (mod as unknown as Record<string, unknown>)[k] !== undefined) ? ' on' : ''}`} onClick={() => props.goTo('rules')}>
             <b>Rules</b><span>VP, discard limit, setup, trading, dice</span>
           </button>
         </div>

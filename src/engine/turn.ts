@@ -148,13 +148,19 @@ export function advanceTurn(ctx: Ctx, th: Thread): void {
   }
 }
 
-/** Roll the numeric (+event) dice, enter the main phase, emit diceRolled. */
-export function doRoll(ctx: Ctx): void {
+/** Roll the numeric (+event) dice, enter the main phase, emit diceRolled.
+ *  `fixed` (rollDice.values) sets numeric dice by index; missing entries are rolled normally. */
+export function doRoll(ctx: Ctx, fixed?: number[]): void {
   const s = ctx.s;
   const dice = ctx.def.dice.numeric;
   const r = rng(ctx);
   let values: number[];
-  if (s.settings.diceMode === 'balanced' && dice.length) {
+  if (fixed?.length) {
+    values = dice.map((d, i) => {
+      const v = fixed[i];
+      return v === undefined || !Number.isFinite(v) ? randInt(r, 1, d.sides) : Math.min(d.sides, Math.max(1, Math.floor(v)));
+    });
+  } else if (s.settings.diceMode === 'balanced' && dice.length) {
     const combos = dice.reduce((a, d) => a * d.sides, 1);
     if (!s.diceDeck?.length) s.diceDeck = shuffle(r, Array.from({ length: combos }, (_, i) => i));
     let idx = s.diceDeck.shift()!;

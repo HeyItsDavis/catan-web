@@ -561,6 +561,17 @@ export const EFFECTS: EffectCatalog = {
     ],
     make: () => ({ op: 'discardCard', choose: true }),
   },
+  takeCard: {
+    key: 'takeCard', label: 'Take a card from a player', category: 'Cards', shape: 'flat',
+    description: 'Move a card from another player’s hand into a player’s hand (e.g. the Spy). The taker can look and pick, or take one at random.',
+    params: [
+      { name: 'from', label: 'From', kind: 'playerRef', default: { var: 'target' } },
+      { name: 'to', label: 'To', kind: 'playerRef', optional: true, help: 'Defaults to the player running this.' },
+      { name: 'deck', label: 'Only cards from deck', kind: 'deckId', optional: true },
+      { name: 'choose', label: 'Taker looks and chooses', kind: 'boolean', optional: true },
+    ],
+    make: () => ({ op: 'takeCard', from: { var: 'target' }, choose: true }),
+  },
   shuffleDeck: {
     key: 'shuffleDeck', label: 'Shuffle deck', category: 'Cards', shape: 'flat',
     description: 'Shuffle a deck.',
@@ -614,8 +625,11 @@ export const EFFECTS: EffectCatalog = {
   /* --- turn flow --- */
   rollDice: {
     key: 'rollDice', label: 'Roll the dice', category: 'Turn', shape: 'flat',
-    description: 'Roll the dice (fires the “dice rolled” event).',
-    params: [], make: () => ({ op: 'rollDice' }),
+    description: 'Roll the dice (fires the “dice rolled” event). Optionally fix the result of each number die (e.g. the Alchemist).',
+    params: [
+      { name: 'values', label: 'Fixed results', kind: 'exprList', optional: true, help: 'One number per die, in order. Leave empty to roll normally. Event dice always roll.' },
+    ],
+    make: () => ({ op: 'rollDice' }),
   },
   extraBuildPhase: {
     key: 'extraBuildPhase', label: 'Special building phase', category: 'Turn', shape: 'flat',
@@ -850,6 +864,12 @@ export const CONDITIONS: ConditionCatalog = {
       { name: 'port', label: 'Harbor type', kind: 'string', optional: true, help: 'A port id such as “port-any” or “port-wool”. Leave empty for any harbor.' },
     ],
     make: () => ({ atPort: { at: 'at' } }),
+    },
+  hexTag: {
+    key: 'hexTag', label: 'Hex is marked', category: 'Board', shape: 'object',
+    description: 'True when the location touches a hex that the map marks with this tag (e.g. “foreign” islands where nobody may start).',
+    params: [at(), { name: 'tag', label: 'Mark', kind: 'string', default: '' }],
+    make: () => ({ hexTag: { at: 'at', tag: '' } }),
   },
 };
 
