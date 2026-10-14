@@ -262,7 +262,11 @@ Use a flag that lasts forever:
 * Aqueduct: on `playerProduction` with `amount == 0`, run *Pick resources to gain* (amount 1).
 * Event die: a face such as `politics` fires an event of the same name. Draw a card when
   `{ dice: 1 } <= politics level + 1`.
-* Per-deck hand limits: the deck's `handLimit`.
+* Per-deck hand limits: the deck's `handLimit`. A limit shared by several decks: a `cardDrawn`
+  trigger (*Runs for* `eventPlayer`) that checks `cardCount` and runs *Discard a card* (`choose`).
+* Spy: *Take a card from a player* (`takeCard`, `choose: true`): the taker looks at the hand and picks.
+* Alchemist: *Roll the dice* with *Fixed results* (`rollDice` `values: [yellow, red]`). Event dice still roll.
+* The full expansion is in `src/content/expansions/cities-knights/index.ts`.
 
 ### Traders & Barbarians: wagons with cargo
 * Move along roads with movement points:
