@@ -620,6 +620,12 @@ const knightPiece = (n: 1 | 2 | 3, name: string, actionsFor: string[], cost?: Re
   initialState: { active: 0, strength: n, fresh: 0, promoted: 0 },
   placement: knightPlacement,
   pieceActions: actionsFor,
+  display: {
+    stateBadges: [
+      { key: 'strength', label: 'Strength', style: 'pips', max: 3 },
+      { key: 'active', label: 'Active', style: 'toggle' },
+    ],
+  },
   ...(cost ? { cost } : {}),
 });
 
@@ -717,6 +723,23 @@ export const mod: ModDef = {
     { id: 'merchant', name: 'Merchant', vp: 1, min: 1, metric: { if: [{ flag: 'hasMerchant' }, 1, 0] } },
   ],
   triggers,
+  display: {
+    globals: [
+      { key: 'barbarians', label: 'Barbarian ship', max: 7, icon: 'pirate', color: '#8b2e2e' },
+      { key: 'barbarianAttacks', label: 'Barbarian attacks' },
+    ],
+    stats: [
+      { key: 'tradeLevel', label: 'Trade (cloth)', max: 5 },
+      { key: 'politicsLevel', label: 'Politics (coin)', max: 5 },
+      { key: 'scienceLevel', label: 'Science (paper)', max: 5 },
+    ],
+    eventFaces: [
+      { face: 'barbarianShip', label: 'Barbarian ship', color: '#3a3a3a', icon: 'pirate' },
+      { face: 'trade', label: 'Trade', color: '#d4a017' },
+      { face: 'politics', label: 'Politics', color: '#2f6fbf' },
+      { face: 'science', label: 'Science', color: '#2e8b57' },
+    ],
+  },
   settings: [
     { id: 'barbarianSteps', name: 'Barbarian ship: steps to Catan', type: 'number', default: 7, min: 3, max: 12 },
   ],
