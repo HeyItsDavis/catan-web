@@ -69,7 +69,7 @@ export function ModEditor() {
   const [tab, setTab] = useState<TabKey>('overview');
   const [selection, setSelection] = useState<Partial<Record<CollectionKey, number>>>({});
   const [focusPath, setFocusPath] = useState<string | null>(null);
-  const [showIssues, setShowIssues] = useState(true);
+  const [showIssues, setShowIssues] = useState(() => typeof window === 'undefined' || window.innerWidth > 720);
   const mod = hist?.present ?? null;
   const dirty = !!mod && JSON.stringify(mod) !== savedJson;
 
@@ -283,7 +283,6 @@ export function ModEditor() {
     <div className="mod-editor">
       <aside className="me-library">
         <div className="me-library-head">
-          <a href="#/" className="me-home" title="Back to the game">⬡</a>
           <b>Mod library</b>
         </div>
         <div className="me-inline me-wrap">

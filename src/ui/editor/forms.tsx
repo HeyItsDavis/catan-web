@@ -35,7 +35,7 @@ export function NameId<T extends Named>(props: FormProps<T> & { noName?: boolean
     <div className="me-form-grid">
       {props.noName ? null : (
         <Field label="Name" path={[...path, 'name']}>
-          <TextInput value={value.name} onChange={name => onChange({ ...value, name, ...(follows ? { id: uniqueId(slugify(name), otherIds) } : {}) })} />
+          <TextInput value={value.name} onChange={name => onChange({ ...value, name, ...(follows && slugify(name) ? { id: uniqueId(slugify(name), otherIds) } : {}) })} />
         </Field>
       )}
       <Field label="Id" path={[...path, 'id']} help="Used by rules and other mods to refer to this. Follows the name until you edit it."

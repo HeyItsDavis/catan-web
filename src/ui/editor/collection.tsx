@@ -2,6 +2,7 @@
 import { useState, type ComponentType } from 'react';
 import type { CollectionKey, ModDef } from '../../engine/schema';
 import { formatPath, uniqueId } from '../../editor/paths';
+import { renameReferences } from '../../editor/rename';
 import { TEMPLATES, applyTemplate } from '../../editor/templates';
 import { useEditor } from './context';
 import {
@@ -202,7 +203,16 @@ function ItemEditor(props: {
   const { parent } = useEditor();
   const Form = info.Form;
   const otherIds = [...items.filter((_, j) => j !== i).map(x => x.id)];
-  const update = (v: Item) => props.setItems(items.map((x, j) => (j === i ? v : x)));
+  const update = (v: Item) => {
+    const nextItems = items.map((x, j) => (j === i ? v : x));
+    if (!parentItem && item.id && v.id && v.id !== item.id) {
+      // The id changed (it follows the name): carry every reference in this mod along.
+      const m = { ...props.mod, [k]: nextItems } as unknown as ModDef;
+      props.onChange(renameReferences(m, k, item.id, v.id));
+      return;
+    }
+    props.setItems(nextItems);
+  };
   return (
     <div className="me-form" data-path={formatPath([k, i])}>
       <div className="me-form-toolbar">

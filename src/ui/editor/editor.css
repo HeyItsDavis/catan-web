@@ -30,15 +30,16 @@
   --cat-logic: #6b6bd6;
   --cat-math: #3a9aa8;
 
-  position: fixed;
-  inset: 0;
+  /* Fills its container (App renders it below the shared top bar). */
+  position: relative;
+  flex: 1;
+  min-height: 0;
   display: flex;
   background: var(--me-bg);
   color: var(--me-text);
   font: 13px/1.4 system-ui, 'Segoe UI', Roboto, sans-serif;
   text-align: left;
   letter-spacing: normal;
-  z-index: 10;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -418,3 +419,27 @@
 /* navigation flash */
 @keyframes me-flash { 0%, 60% { box-shadow: 0 0 0 3px var(--me-warn); background-color: var(--me-warn-bg); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .me-flash { animation: me-flash 1.6s ease-out; }
+
+/* ---------- narrow screens (phones) ---------- */
+@media (max-width: 720px) {
+  /* Stack everything and let the editor scroll as one page. */
+  .mod-editor { flex-direction: column; overflow-y: auto; }
+  .me-library {
+    width: auto; flex: none; max-height: 28vh; border-right: none; border-bottom: 1px solid var(--me-border);
+  }
+  .me-main { flex: none; min-height: 85vh; }
+  .me-body { min-height: 70vh; }
+  .me-coll { flex-direction: column; height: auto; }
+  .me-coll-list { width: auto; border-right: none; border-bottom: 1px solid var(--me-border); max-height: 45vh; }
+  .me-coll-form { overflow-y: visible; }
+  .me-lib-actions { display: inline-flex; }
+  .me-welcome { padding: 20px 16px; }
+  .me-topbar { flex-wrap: wrap; padding: 6px 10px; }
+  .me-topbar .me-spacer { display: none; }
+  .me-save { max-width: 100%; margin-left: 0; }
+  .me-form { padding: 10px 10px 60px; }
+  .me-body { position: relative; }
+  .me-issues {
+    position: absolute; inset: 0 0 0 auto; width: min(320px, 90%); z-index: 5; box-shadow: var(--me-shadow);
+  }
+}
