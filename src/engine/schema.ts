@@ -131,7 +131,10 @@ export type Condition =
   | { connectedTo: { at: string; owner: PlayerRef; via?: Id[] } } // network reachability
   | { distanceRule: { at: string; minDistance?: number } }       // no vertex pieces within N edges
   | { hasToken: { at: string; token: Id } }
-  | { hexNumberIn: { at: string; numbers: number[] } };
+  | { hexNumberIn: { at: string; numbers: number[] } }
+  /** Two bound location vars are adjacent (hex/vertex/edge incidence or neighbors). Used e.g. by the
+   *  setup road rule: `{ isAdjacent: ['at', 'lastPlaced'] }` (engine binds `lastPlaced` during setup). */
+  | { isAdjacent: [string, string] };
 
 /* ------------------------------------------------------------------------ */
 /*  Effects                                                                  */
@@ -609,6 +612,10 @@ export interface Prompt {
   /** For discard: how many to discard. */
   amount?: number;
   optional?: boolean;
+  /** Human-readable labels parallel to `options` (chooseOption labels, player names...). */
+  optionLabels?: string[];
+  /** Piece being placed/moved, for UI previews of location prompts. */
+  piece?: Id;
 }
 
 export interface TradeOffer {
@@ -657,6 +664,15 @@ export interface GameState {
   trades: TradeOffer[];
   log: LogEntry[];
   winner: string | null;
+  /** Engine-internal id counter (pieces, cards, prompts, trades). */
+  idCounter?: number;
+  /** Balanced dice mode: remaining shuffled combination indexes (hidden by redaction). */
+  diceDeck?: number[];
+  /** Special building phase in progress: builders still to go, and the index of the turn player. */
+  specialBuild?: { queue: string[]; turnPlayerIndex: number };
+  /** ms timestamp when the current turn (or setup placement) began; set from the optional `now`
+   *  argument of createGame/applyCommand (the engine never reads the clock itself). */
+  turnStartedAt?: number;
 }
 
 /* ------------------------------------------------------------------------ */

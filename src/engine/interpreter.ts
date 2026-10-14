@@ -1,0 +1,911 @@
+/**
+ * The effect interpreter.
+ *
+ * State model (all JSON, lives in GameState.stack as Thread[]):
+ *  - A Thread is an independent line of execution with its own frame stack and scopes.
+ *    Normally there is one; `forEachPlayer` with order 'simultaneous' spawns one child
+ *    thread per player and the parent waits (`join`) until all children finish.
+ *  - Frames: 'block' (list of effects + pc), 'repeat', 'each' (loop over ids).
+ *  - Scopes hold `self` and variables. Blocks of the same action share a scope, so a var
+ *    bound inside a loop body stays visible afterwards. Triggers get a fresh scope whose
+ *    vars are the event payload (+ `event`).
+ *  - When an effect needs input it raises a Prompt (legal options precomputed) and the
+ *    thread records `pending`. `respond` applies the answer (bind var / discard / branch)
+ *    and resumes. Many ops are two-stage: the prompt binds a temp var and then the same
+ *    op is re-run with the location bound (`then`).
+ *  - The root thread of a player action carries a snapshot of the state taken before the
+ *    action started; `abortIf` (or a failed `pay`) restores it (= cancel + refund).
+ *
+ * Events emitted while executing an op are converted into trigger frames pushed on top of
+ * the current thread, so triggers run immediately after the op that caused them.
+ */
+import type { CardInstance, Effect, GameState, Id, Prompt } from './schema';
+import {
+  type Ctx, type Env, type Val, CommandError, currentPlayerId, emit, findPlayer, getPlayer, invalidatePieces, log,
+  nextId, piecesAt, playerName, playersFrom, rng, supplyLeft,
+} from './context';
+import { evalCond } from './conditions';
+import { evalExpr, evalResourceMap } from './exprs';
+import { locVar, queryPieces, resolvePlayer, resolveResource } from './refs';
+import { bankHas, moveResource, pay, randomResource } from './resources';
+import { runProduction } from './production';
+import { filterLocations, legalPlacements, legalTokenSpots, legalUpgrades, allLocations } from './placement';
+import { randInt, shuffle } from './rng';
+import { advanceSetup, advanceTurn, doRoll, startingResources, turnStart } from './turn';
+
+/* --------------------------------- types -------------------------------- */
+
+export type InternalEffect =
+  | { op: '$setupStep'; step: number }
+  | { op: '$setupNext' }
+  | { op: '$startingResources' }
+  | { op: '$turnStart' }
+  | { op: '$advanceTurn' }
+  | { op: '$afterCardPlay'; instance: CardInstance };
+
+/** Effects plus engine-internal ops and a few internal flags on public ops. */
+export type IEffect = (Effect & { $cancelable?: boolean; $bankOnly?: boolean; $deck?: Id }) | InternalEffect;
+
+export interface Scope { self: string; vars: Record<string, Val> }
+
+export type Frame =
+  | { t: 'block'; sc: string; fx: IEffect[]; pc: number; own?: boolean }
+  | { t: 'repeat'; sc: string; fx: IEffect[]; i: number; n: number; as?: string }
+  | { t: 'each'; sc: string; fx: IEffect[]; items: string[]; i: number; as: string };
+
+export type Pending =
+  | { k: 'bind'; prompt: string; sc: string; var: string; then?: IEffect[] }
+  | { k: 'option'; prompt: string; sc: string; branches: IEffect[][] }
+  | { k: 'discard'; prompt: string; player: string; kind?: string }
+  | { k: 'discardCard'; prompt: string; player: string };
+
+export interface Thread {
+  id: string;
+  parent?: string;
+  frames: Frame[];
+  scopes: Record<string, Scope>;
+  pending?: Pending;
+  join?: string[];
+  /** Root action threads: state before the action (restored by abortIf). */
+  snapshot?: GameState;
+}
+
+const MAX_STEPS = 200_000;
+
+/* ------------------------------ thread utils ---------------------------- */
+
+export function threads(ctx: Ctx): Thread[] {
+  return ctx.s.stack as Thread[];
+}
+
+function findThread(ctx: Ctx, id: string): Thread | undefined {
+  return threads(ctx).find((t) => t.id === id);
+}
+
+export function newScope(ctx: Ctx, th: Thread, self: string, vars: Record<string, Val> = {}): string {
+  const id = nextId(ctx, 's');
+  th.scopes[id] = { self, vars };
+  return id;
+}
+
+/** Push a block that runs in its own fresh scope. */
+export function pushScoped(ctx: Ctx, th: Thread, self: string, fx: IEffect[], vars: Record<string, Val> = {}): void {
+  const sc = newScope(ctx, th, self, vars);
+  th.frames.push({ t: 'block', sc, fx, pc: 0, own: true });
+}
+
+function pushBlock(th: Thread, sc: string, fx: IEffect[]): void {
+  if (fx.length) th.frames.push({ t: 'block', sc, fx, pc: 0 });
+}
+
+/** Start a new root thread. `txn` = snapshot the state for abort/refund. */
+export function newThread(
+  ctx: Ctx, self: string, fx: IEffect[], opts: { vars?: Record<string, Val>; txn?: boolean; parent?: string } = {},
+): Thread {
+  const th: Thread = { id: nextId(ctx, 't'), frames: [], scopes: {} };
+  if (opts.parent) th.parent = opts.parent;
+  if (opts.txn) th.snapshot = structuredClone(ctx.s);
+  pushScoped(ctx, th, self, fx, opts.vars ?? {});
+  threads(ctx).push(th);
+  return th;
+}
+
+function finishThread(ctx: Ctx, th: Thread): void {
+  const st = threads(ctx);
+  const i = st.indexOf(th);
+  if (i >= 0) st.splice(i, 1);
+  if (th.parent) {
+    const p = findThread(ctx, th.parent);
+    if (p?.join) {
+      p.join = p.join.filter((x) => x !== th.id);
+      if (!p.join.length) delete p.join;
+    }
+  }
+}
+
+function killThread(ctx: Ctx, th: Thread): void {
+  for (const child of threads(ctx).filter((t) => t.parent === th.id)) killThread(ctx, child);
+  if (th.pending) ctx.s.prompts = ctx.s.prompts.filter((p) => p.id !== th.pending!.prompt);
+  delete th.pending;
+  th.frames = [];
+  delete th.join;
+  finishThread(ctx, th);
+}
+
+function rootOf(ctx: Ctx, th: Thread): Thread {
+  let t = th;
+  while (t.parent) {
+    const p = findThread(ctx, t.parent);
+    if (!p) break;
+    t = p;
+  }
+  return t;
+}
+
+/** Cancel the current action: restore its snapshot (refund) or, if none, stop this thread. */
+export function abort(ctx: Ctx, th: Thread, message: string): void {
+  const root = rootOf(ctx, th);
+  ctx.events = [];
+  if (root.snapshot) {
+    const snap = root.snapshot;
+    const counter = ctx.s.idCounter;
+    ctx.s = snap;
+    ctx.s.idCounter = Math.max(counter ?? 1, snap.idCounter ?? 1);
+    invalidatePieces(ctx);
+    ctx.aborted = message;
+    log(ctx, `Cancelled: ${message}`);
+  } else {
+    log(ctx, `Cancelled: ${message}`);
+    killThread(ctx, th);
+  }
+}
+
+/* ------------------------------- prompts -------------------------------- */
+
+function raise(ctx: Ctx, th: Thread, p: Omit<Prompt, 'id'>, pending: DistributiveOmit<Pending, 'prompt'>): void {
+  const id = nextId(ctx, 'p');
+  const prompt: Prompt = { id, ...p };
+  if (prompt.optionLabels === undefined) delete prompt.optionLabels;
+  if (prompt.piece === undefined) delete prompt.piece;
+  if (prompt.amount === undefined) delete prompt.amount;
+  if (prompt.optional === undefined) delete prompt.optional;
+  ctx.s.prompts.push(prompt);
+  th.pending = { ...pending, prompt: id } as Pending;
+}
+
+type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
+
+function tmpVar(ctx: Ctx): string {
+  return `$${nextId(ctx, 'v')}`;
+}
+
+/* ------------------------------ event flush ----------------------------- */
+
+interface Invocation { self: string; vars: Record<string, Val>; fx: Effect[] }
+
+function triggersFor(ctx: Ctx, ev: { name: string; payload: Record<string, Val>; player?: string }): Invocation[] {
+  type Cand = { t: (typeof ctx.def.triggers)[number]; pieceAt?: string; pieceId?: string; owner?: string };
+  const cands: Cand[] = [];
+  for (const t of ctx.def.triggers) if (t.on === ev.name) cands.push({ t });
+  for (const pd of ctx.def.pieces) {
+    if (!pd.triggers?.length) continue;
+    const ts = pd.triggers.filter((t) => t.on === ev.name);
+    if (!ts.length) continue;
+    for (const pc of ctx.s.pieces) {
+      if (pc.type !== pd.id) continue;
+      for (const t of ts) cands.push({ t, pieceAt: pc.at, pieceId: pc.id, owner: pc.owner });
+    }
+  }
+  cands.sort((a, b) => (a.t.priority ?? 0) - (b.t.priority ?? 0));
+  const out: Invocation[] = [];
+  for (const c of cands) {
+    const vars: Record<string, Val> = { ...ev.payload, event: ev.name };
+    let selves: string[];
+    if (c.owner) {
+      vars.this = c.pieceAt!;
+      vars.thisId = c.pieceId!;
+      selves = [c.owner];
+    } else if (c.t.as === 'eventPlayer') selves = [ev.player ?? currentPlayerId(ctx.s)];
+    else if (c.t.as === 'eachPlayer') selves = playersFrom(ctx);
+    else selves = [currentPlayerId(ctx.s)];
+    for (const self of selves) {
+      if (!self) continue;
+      if (evalCond(ctx, { self, vars }, c.t.when)) out.push({ self, vars: { ...vars }, fx: c.t.do });
+    }
+  }
+  return out;
+}
+
+export function flushEvents(ctx: Ctx, th: Thread | null): void {
+  if (!ctx.events.length) return;
+  const evs = ctx.events;
+  ctx.events = [];
+  const inv = evs.flatMap((e) => triggersFor(ctx, e));
+  if (!inv.length) return;
+  let target = th && threads(ctx).includes(th) ? th : null;
+  if (!target) {
+    target = { id: nextId(ctx, 't'), frames: [], scopes: {} };
+    threads(ctx).push(target);
+  }
+  for (let i = inv.length - 1; i >= 0; i--) pushScoped(ctx, target, inv[i].self, inv[i].fx, inv[i].vars);
+}
+
+/* --------------------------------- run ---------------------------------- */
+
+function runnable(t: Thread): boolean {
+  return !t.pending && !(t.join && t.join.length);
+}
+
+/** Run until every thread is blocked on a prompt or finished. */
+export function run(ctx: Ctx): void {
+  let steps = 0;
+  for (;;) {
+    if (ctx.s.phase === 'gameOver') {
+      ctx.s.stack = [];
+      ctx.s.prompts = [];
+      return;
+    }
+    const st = threads(ctx);
+    let th: Thread | undefined;
+    for (let i = st.length - 1; i >= 0; i--) if (runnable(st[i])) { th = st[i]; break; }
+    if (!th) return;
+    if (++steps > MAX_STEPS) throw new Error('Interpreter step limit exceeded (infinite trigger loop?)');
+    step(ctx, th);
+  }
+}
+
+function step(ctx: Ctx, th: Thread): void {
+  const f = th.frames[th.frames.length - 1];
+  if (!f) { finishThread(ctx, th); return; }
+  const scope = th.scopes[f.sc];
+  if (f.t === 'block') {
+    if (f.pc >= f.fx.length) {
+      th.frames.pop();
+      if (f.own) delete th.scopes[f.sc];
+      return;
+    }
+    const eff = f.fx[f.pc++];
+    const before = ctx.s;
+    exec(ctx, th, f.sc, eff);
+    if (ctx.s === before) flushEvents(ctx, th);
+    return;
+  }
+  if (f.t === 'repeat') {
+    if (f.i >= f.n) { th.frames.pop(); return; }
+    if (f.as) scope.vars[f.as] = f.i;
+    f.i++;
+    pushBlock(th, f.sc, f.fx);
+    return;
+  }
+  if (f.i >= f.items.length) { th.frames.pop(); return; }
+  scope.vars[f.as] = f.items[f.i];
+  f.i++;
+  pushBlock(th, f.sc, f.fx);
+}
+
+/* --------------------------------- exec --------------------------------- */
+
+function interpolate(ctx: Ctx, env: Env, text: string): string {
+  return text.replace(/\{(\w+|\$\w+)\}/g, (_, k: string) => {
+    const v = k === 'self' ? env.self : env.vars[k];
+    if (typeof v === 'string') {
+      const p = findPlayer(ctx, v);
+      if (p) return p.name;
+      return ctx.L.resources.get(v)?.name ?? ctx.L.pieces.get(v)?.name ?? ctx.L.cards.get(v)?.name ?? v;
+    }
+    return v === undefined || v === null ? '' : String(v);
+  });
+}
+
+function resName(ctx: Ctx, r: string): string {
+  return ctx.L.resources.get(r)?.name ?? r;
+}
+
+function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
+  const env: Env = th.scopes[sc];
+  const s = ctx.s;
+  const P = (ref: Parameters<typeof resolvePlayer>[2], dflt: Parameters<typeof resolvePlayer>[3] = 'self') =>
+    resolvePlayer(ctx, env, ref, dflt);
+  const bind = (name: string | undefined, v: Val) => { if (name) env.vars[name] = v; };
+
+  switch (eff.op) {
+    /* ---------------- control flow ---------------- */
+    case 'sequence': pushBlock(th, sc, eff.do); return;
+    case 'repeat': {
+      const n = Math.max(0, Math.floor(evalExpr(ctx, env, eff.times)));
+      th.frames.push({ t: 'repeat', sc, fx: eff.do, i: 0, n, as: eff.as });
+      return;
+    }
+    case 'if': pushBlock(th, sc, evalCond(ctx, env, eff.cond) ? eff.then : eff.else ?? []); return;
+    case 'forEachPlayer': {
+      const vars = { ...env.vars };
+      const e: Env = { self: env.self, vars };
+      const items = playersFrom(ctx).filter((pid) => { vars[eff.as] = pid; return evalCond(ctx, e, eff.filter); });
+      if (!items.length) return;
+      if (eff.order === 'simultaneous') {
+        const kids = items.map((pid) => newThread(ctx, env.self, eff.do, { vars: { ...env.vars, [eff.as]: pid }, parent: th.id }).id);
+        th.join = kids;
+      } else th.frames.push({ t: 'each', sc, fx: eff.do, items, i: 0, as: eff.as });
+      return;
+    }
+    case 'forEachPiece': {
+      const items = [...new Set(queryPieces(ctx, env, eff.query).map((p) => p.at))];
+      if (items.length) th.frames.push({ t: 'each', sc, fx: eff.do, items, i: 0, as: eff.as });
+      return;
+    }
+    case 'chooseOption': {
+      const who = P(eff.player);
+      if (!who || who === 'bank') return;
+      const idx = eff.options.map((o, i) => (evalCond(ctx, env, o.cond) ? i : -1)).filter((i) => i >= 0);
+      if (!idx.length) return;
+      raise(ctx, th, {
+        player: who, kind: 'option', label: eff.label ?? 'Choose an option',
+        options: idx.map(String), optionLabels: idx.map((i) => eff.options[i].label),
+      }, { k: 'option', sc, branches: eff.options.map((o) => o.do) });
+      return;
+    }
+    case 'setVar': env.vars[eff.name] = evalExpr(ctx, env, eff.value); return;
+    case 'emit': {
+      const payload: Record<string, Val> = {};
+      for (const [k, x] of Object.entries(eff.payload ?? {})) payload[k] = evalExpr(ctx, env, x);
+      payload.player = env.self;
+      emit(ctx, eff.event, payload, env.self);
+      return;
+    }
+    case 'log': log(ctx, interpolate(ctx, env, eff.text), env.self); return;
+    case 'abortIf':
+      if (evalCond(ctx, env, eff.cond)) abort(ctx, th, eff.message ?? 'Action not allowed');
+      return;
+
+    /* ---------------- choices ---------------- */
+    case 'choosePlayer': {
+      const who = P(eff.player);
+      if (!who || who === 'bank') { bind(eff.as, null); return; }
+      const vars = { ...env.vars };
+      const e: Env = { self: env.self, vars };
+      const opts = playersFrom(ctx).filter((pid) => {
+        if (!eff.filter) return pid !== env.self;
+        vars[eff.as] = pid;
+        return evalCond(ctx, e, eff.filter);
+      });
+      if (!opts.length) { bind(eff.as, null); return; }
+      raise(ctx, th, {
+        player: who, kind: 'player', label: eff.label ?? 'Choose a player', options: opts,
+        optionLabels: opts.map((p) => playerName(ctx, p)), optional: eff.optional,
+      }, { k: 'bind', sc, var: eff.as });
+      return;
+    }
+    case 'chooseResource': {
+      const who = P(eff.player);
+      if (!who || who === 'bank') { bind(eff.as, null); return; }
+      let opts = eff.options ?? ctx.def.resources.filter((r) => !eff.kind || r.kind === eff.kind).map((r) => r.id);
+      if (eff.$bankOnly) opts = opts.filter((r) => bankHas(ctx, r) > 0);
+      if (!opts.length) { bind(eff.as, null); return; }
+      raise(ctx, th, {
+        player: who, kind: 'resource', label: eff.label ?? 'Choose a resource', options: opts,
+        optionLabels: opts.map((r) => resName(ctx, r)),
+      }, { k: 'bind', sc, var: eff.as });
+      return;
+    }
+    case 'chooseLocation': {
+      const who = P(eff.player);
+      if (!who || who === 'bank') { bind(eff.as, null); return; }
+      const opts = filterLocations(ctx, env, allLocations(ctx, eff.kind), [eff.filter], eff.as);
+      if (!opts.length) { bind(eff.as, null); return; }
+      raise(ctx, th, { player: who, kind: 'location', label: eff.label ?? 'Choose a location', options: opts, optional: eff.optional },
+        { k: 'bind', sc, var: eff.as });
+      return;
+    }
+    case 'choosePiece': {
+      const who = P(eff.player);
+      if (!who || who === 'bank') { bind(eff.as, null); return; }
+      const locs = [...new Set(queryPieces(ctx, env, eff.query).map((p) => p.at))];
+      const opts = filterLocations(ctx, env, locs, [eff.filter], eff.as);
+      if (!opts.length) { bind(eff.as, null); return; }
+      raise(ctx, th, { player: who, kind: 'piece', label: eff.label ?? 'Choose a piece', options: opts, optional: eff.optional },
+        { k: 'bind', sc, var: eff.as });
+      return;
+    }
+
+    /* ---------------- resources ---------------- */
+    case 'gain': {
+      const pid = P(eff.player);
+      if (!pid || pid === 'bank') return;
+      const got: string[] = [];
+      for (const [r, n] of Object.entries(evalResourceMap(ctx, env, eff.resources))) {
+        const m = moveResource(ctx, 'bank', pid, r, n);
+        if (m) got.push(`${m} ${resName(ctx, r)}`);
+      }
+      if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid);
+      return;
+    }
+    case 'pay': {
+      const pid = P(eff.player);
+      if (!pid || pid === 'bank') return;
+      if (!pay(ctx, pid, evalResourceMap(ctx, env, eff.resources))) abort(ctx, th, `${playerName(ctx, pid)} cannot afford this`);
+      return;
+    }
+    case 'transfer': {
+      const from = P(eff.from);
+      const to = P(eff.to);
+      if (!from || !to || from === to) return;
+      const amount = Math.max(0, Math.floor(evalExpr(ctx, env, eff.amount)));
+      if (!amount) return;
+      if (eff.resource === 'random') {
+        let moved = 0;
+        for (let i = 0; i < amount; i++) {
+          const r = from === 'bank' ? randomBankResource(ctx) : randomResource(ctx, from);
+          if (!r) break;
+          moved += moveResource(ctx, from, to, r, 1);
+        }
+        if (moved) log(ctx, `${playerName(ctx, to)} takes ${moved} card(s) from ${from === 'bank' ? 'the bank' : playerName(ctx, from)}`, to);
+        return;
+      }
+      if (eff.resource === 'choice') {
+        const giver = findPlayer(ctx, from);
+        if (!giver) return;
+        const opts = ctx.def.resources.filter((r) => (giver.resources[r.id] ?? 0) > 0).map((r) => r.id);
+        if (!opts.length) return;
+        const v = tmpVar(ctx);
+        raise(ctx, th, { player: from, kind: 'resource', label: 'Choose a resource to give', options: opts, optionLabels: opts.map((r) => resName(ctx, r)) },
+          { k: 'bind', sc, var: v, then: [{ ...eff, resource: { var: v } }] });
+        return;
+      }
+      const r = resolveResource(env, eff.resource);
+      if (!r) return;
+      const m = moveResource(ctx, from, to, r, amount);
+      if (m) log(ctx, `${from === 'bank' ? 'The bank' : playerName(ctx, from)} gives ${m} ${resName(ctx, r)} to ${to === 'bank' ? 'the bank' : playerName(ctx, to)}`);
+      return;
+    }
+    case 'steal': {
+      const from = P(eff.from);
+      const to = P(eff.to);
+      if (!from || !to || from === 'bank' || from === to) return;
+      const amount = eff.amount === undefined ? 1 : Math.max(0, Math.floor(evalExpr(ctx, env, eff.amount)));
+      let moved = 0;
+      for (let i = 0; i < amount; i++) {
+        const r = randomResource(ctx, from);
+        if (!r) break;
+        moved += moveResource(ctx, from, to, r, 1);
+      }
+      log(ctx, moved ? `${playerName(ctx, to)} stole ${moved} card(s) from ${playerName(ctx, from)}` : `${playerName(ctx, from)} had nothing to steal`, to);
+      return;
+    }
+    case 'discard': {
+      const pid = P(eff.player);
+      const p = findPlayer(ctx, pid);
+      if (!p) return;
+      const amount = Math.max(0, Math.floor(evalExpr(ctx, env, eff.amount)));
+      if (!amount) return;
+      const eligible = ctx.def.resources.filter((r) => (!eff.kind || r.kind === eff.kind) && (p.resources[r.id] ?? 0) > 0).map((r) => r.id);
+      const total = eligible.reduce((a, r) => a + p.resources[r], 0);
+      if (total <= amount) {
+        for (const r of eligible) moveResource(ctx, p.id, 'bank', r, p.resources[r]);
+        if (total) log(ctx, `${p.name} discards ${total} card(s)`, p.id);
+        return;
+      }
+      raise(ctx, th, { player: p.id, kind: 'discard', label: `Discard ${amount} card(s)`, options: eligible, amount },
+        { k: 'discard', player: p.id, kind: eff.kind });
+      return;
+    }
+    case 'chooseAndGain': {
+      const pid = P(eff.player);
+      if (!pid || pid === 'bank') return;
+      const n = Math.max(0, Math.floor(evalExpr(ctx, env, eff.amount)));
+      if (!n) return;
+      const v = tmpVar(ctx);
+      const options = eff.options ?? ctx.def.resources.filter((r) => !eff.kind || r.kind === eff.kind).map((r) => r.id);
+      const sc2 = newScope(ctx, th, pid, { ...env.vars });
+      th.frames.push({ t: 'block', sc: sc2, pc: 0, own: true, fx: [{
+        op: 'repeat', times: n, do: [
+          { op: 'chooseResource', as: v, options, label: 'Choose a resource to take', $bankOnly: true } as Effect,
+          { op: 'if', cond: { varSet: v }, then: [{ op: 'transfer', from: 'bank', to: 'self', resource: { var: v }, amount: 1 }] },
+        ],
+      }] });
+      return;
+    }
+    case 'produce': {
+      const hex = eff.hex ? locVar(env, eff.hex) ?? undefined : undefined;
+      const roll = eff.roll !== undefined ? evalExpr(ctx, env, eff.roll) : s.lastRoll?.total;
+      const player = eff.player ? P(eff.player) ?? undefined : undefined;
+      if (hex === undefined && roll === undefined) return;
+      const gold = runProduction(ctx, { roll: hex ? undefined : roll, hex, player });
+      for (const g of gold.reverse()) {
+        pushScoped(ctx, th, g.player, [{ op: 'chooseAndGain', amount: g.amount, options: g.options }]);
+      }
+      return;
+    }
+
+    /* ---------------- pieces & board ---------------- */
+    case 'place': {
+      const pid = P(eff.player);
+      const pdef = ctx.L.pieces.get(eff.piece);
+      if (!pid || pid === 'bank' || !pdef) return;
+      if (eff.location?.at === undefined) {
+        const opts = legalPlacements(ctx, env, eff.piece, pid, { ignoreConnection: eff.ignoreConnection, where: eff.location?.where });
+        if (!opts.length) { bind(eff.as, null); log(ctx, `No legal location for ${pdef.name}`, pid); return; }
+        const v = tmpVar(ctx);
+        raise(ctx, th, {
+          player: pid, kind: 'location', label: eff.location?.label ?? `Place ${pdef.name}`, options: opts, piece: pdef.id,
+          optional: eff.$cancelable,
+        }, { k: 'bind', sc, var: v, then: [{ ...eff, location: { ...eff.location, at: v } }] });
+        return;
+      }
+      const at = locVar(env, eff.location.at);
+      if (!at) { bind(eff.as, null); return; }
+      if (supplyLeft(ctx, pid, pdef.id) <= 0) { log(ctx, `No ${pdef.name} left in supply`, pid); bind(eff.as, null); return; }
+      if (!eff.free && pdef.cost && !pay(ctx, pid, evalResourceMap(ctx, env, pdef.cost))) {
+        abort(ctx, th, `${playerName(ctx, pid)} cannot afford ${pdef.name}`);
+        return;
+      }
+      const old = piecesAt(ctx, at).find((p) => p.owner === pid && pdef.upgradesFrom?.includes(p.type));
+      if (old) removePieceInstance(ctx, old.id);
+      addPiece(ctx, pdef.id, pid, at);
+      bind(eff.as, at);
+      log(ctx, `${playerName(ctx, pid)} ${old ? 'upgrades to' : 'places'} a ${pdef.name}`, pid);
+      emit(ctx, 'piecePlaced', { piece: pdef.id, at, owner: pid, player: pid }, pid);
+      if (old) emit(ctx, 'pieceUpgraded', { from: old.type, piece: pdef.id, at, owner: pid, player: pid }, pid);
+      return;
+    }
+    case 'upgrade': {
+      const pid = P(eff.player);
+      const to = ctx.L.pieces.get(eff.to);
+      if (!pid || pid === 'bank' || !to) return;
+      const from = Array.isArray(eff.from) ? eff.from : [eff.from];
+      if (eff.location?.at === undefined) {
+        const opts = legalUpgrades(ctx, env, from, to.id, pid, eff.location?.where);
+        if (!opts.length) { bind(eff.as, null); return; }
+        const v = tmpVar(ctx);
+        raise(ctx, th, { player: pid, kind: 'location', label: eff.location?.label ?? `Upgrade to ${to.name}`, options: opts, piece: to.id, optional: eff.$cancelable },
+          { k: 'bind', sc, var: v, then: [{ ...eff, location: { ...eff.location, at: v } }] });
+        return;
+      }
+      const at = locVar(env, eff.location.at);
+      const old = at ? piecesAt(ctx, at).find((p) => p.owner === pid && from.includes(p.type)) : undefined;
+      if (!at || !old) { bind(eff.as, null); return; }
+      if (supplyLeft(ctx, pid, to.id) <= 0) { bind(eff.as, null); return; }
+      if (!eff.free && to.cost && !pay(ctx, pid, evalResourceMap(ctx, env, to.cost))) {
+        abort(ctx, th, `${playerName(ctx, pid)} cannot afford ${to.name}`);
+        return;
+      }
+      removePieceInstance(ctx, old.id);
+      addPiece(ctx, to.id, pid, at);
+      bind(eff.as, at);
+      log(ctx, `${playerName(ctx, pid)} upgrades to a ${to.name}`, pid);
+      emit(ctx, 'pieceUpgraded', { from: old.type, piece: to.id, at, owner: pid, player: pid }, pid);
+      return;
+    }
+    case 'remove': {
+      if (eff.location?.at === undefined) {
+        const locs = [...new Set(queryPieces(ctx, env, eff.query).map((p) => p.at))];
+        const opts = filterLocations(ctx, env, locs, [eff.location?.where]);
+        if (!opts.length) { bind(eff.as, null); return; }
+        const v = tmpVar(ctx);
+        raise(ctx, th, { player: env.self, kind: 'piece', label: eff.location?.label ?? 'Choose a piece to remove', options: opts },
+          { k: 'bind', sc, var: v, then: [{ ...eff, location: { ...eff.location, at: v } }] });
+        return;
+      }
+      const at = locVar(env, eff.location.at);
+      const matching = at ? queryPieces(ctx, env, eff.query).filter((p) => p.at === at) : [];
+      const pc = matching[0];
+      if (!pc) { bind(eff.as, null); return; }
+      removePieceInstance(ctx, pc.id);
+      if (eff.returnToSupply === false) {
+        const owner = getPlayer(ctx, pc.owner);
+        owner.stats[`lost:${pc.type}`] = (owner.stats[`lost:${pc.type}`] ?? 0) + 1;
+      }
+      bind(eff.as, pc.at);
+      log(ctx, `${playerName(ctx, pc.owner)}'s ${ctx.L.pieces.get(pc.type)?.name ?? pc.type} is removed`, pc.owner);
+      emit(ctx, 'pieceRemoved', { piece: pc.type, at: pc.at, owner: pc.owner, player: pc.owner }, pc.owner);
+      return;
+    }
+    case 'movePiece': {
+      if (eff.from?.at === undefined) {
+        const locs = [...new Set(queryPieces(ctx, env, eff.query).map((p) => p.at))];
+        const opts = filterLocations(ctx, env, locs, [eff.from?.where]);
+        if (!opts.length) return;
+        const v = tmpVar(ctx);
+        raise(ctx, th, { player: env.self, kind: 'piece', label: eff.from?.label ?? 'Choose a piece to move', options: opts },
+          { k: 'bind', sc, var: v, then: [{ ...eff, from: { ...eff.from, at: v } }] });
+        return;
+      }
+      const fromLoc = locVar(env, eff.from.at);
+      const pc = fromLoc ? queryPieces(ctx, env, eff.query).find((p) => p.at === fromLoc) : undefined;
+      if (!pc) return;
+      if (eff.to?.at === undefined) {
+        const idx = s.pieces.indexOf(pc);
+        s.pieces.splice(idx, 1);
+        invalidatePieces(ctx);
+        const opts = legalPlacements(ctx, env, pc.type, pc.owner, { ignoreSupply: true, where: eff.to?.where }).filter((l) => l !== fromLoc);
+        s.pieces.splice(idx, 0, pc);
+        invalidatePieces(ctx);
+        if (!opts.length) return;
+        const v = tmpVar(ctx);
+        raise(ctx, th, { player: env.self, kind: 'location', label: eff.to?.label ?? 'Move to', options: opts, piece: pc.type },
+          { k: 'bind', sc, var: v, then: [{ ...eff, to: { ...eff.to, at: v } }] });
+        return;
+      }
+      const toLoc = locVar(env, eff.to.at);
+      if (!toLoc) return;
+      pc.at = toLoc;
+      invalidatePieces(ctx);
+      emit(ctx, 'pieceMoved', { piece: pc.type, from: fromLoc, at: toLoc, owner: pc.owner, player: pc.owner }, pc.owner);
+      return;
+    }
+    case 'setPieceState': {
+      const at = locVar(env, eff.at);
+      const pc = at ? piecesAt(ctx, at)[0] : undefined;
+      if (pc) pc.state[eff.key] = evalExpr(ctx, env, eff.value);
+      return;
+    }
+    case 'moveToken': {
+      const t = ctx.L.tokens.get(eff.token);
+      if (!t) return;
+      if (eff.to?.at === undefined) {
+        const opts = legalTokenSpots(ctx, env, t.id, eff.to?.where);
+        if (!opts.length) { bind(eff.as, null); return; }
+        const v = tmpVar(ctx);
+        raise(ctx, th, { player: env.self, kind: 'location', label: eff.to?.label ?? `Move the ${t.name}`, options: opts },
+          { k: 'bind', sc, var: v, then: [{ ...eff, to: { ...eff.to, at: v } }] });
+        return;
+      }
+      const at = locVar(env, eff.to.at);
+      if (!at) { bind(eff.as, null); return; }
+      const prev = s.tokens[t.id] ?? null;
+      s.tokens[t.id] = at;
+      bind(eff.as, at);
+      log(ctx, `${playerName(ctx, env.self)} moves the ${t.name}`, env.self);
+      emit(ctx, 'tokenMoved', { token: t.id, at, from: prev, player: env.self }, env.self);
+      if (t.onMove?.length) pushScoped(ctx, th, env.self, t.onMove, { ...env.vars, at, token: t.id });
+      return;
+    }
+    case 'setTerrain': {
+      const at = locVar(env, eff.at);
+      if (at && s.hexes[at]) s.hexes[at].terrain = eff.terrain;
+      return;
+    }
+    case 'setHexNumber': {
+      const at = locVar(env, eff.at);
+      if (at && s.hexes[at]) s.hexes[at].number = eff.number === null ? null : evalExpr(ctx, env, eff.number);
+      return;
+    }
+    case 'revealHex': {
+      const at = locVar(env, eff.at);
+      if (at && s.hexes[at] && !s.hexes[at].revealed) {
+        s.hexes[at].revealed = true;
+        emit(ctx, 'hexRevealed', { at, terrain: s.hexes[at].terrain, player: env.self }, env.self);
+      }
+      return;
+    }
+
+    /* ---------------- cards ---------------- */
+    case 'drawCard': {
+      const pid = P(eff.player);
+      if (!pid || pid === 'bank') return;
+      const n = eff.count === undefined ? 1 : Math.max(0, Math.floor(evalExpr(ctx, env, eff.count)));
+      for (let i = 0; i < n; i++) {
+        const inst = drawCard(ctx, eff.deck, pid);
+        if (!inst) { log(ctx, `The ${ctx.L.decks.get(eff.deck)?.name ?? eff.deck} deck is empty`); break; }
+        afterAcquire(ctx, th, pid, inst);
+      }
+      return;
+    }
+    case 'giveCard': {
+      const pid = P(eff.player);
+      const p = findPlayer(ctx, pid);
+      if (!p || !ctx.L.cards.has(eff.card)) return;
+      const inst: CardInstance = { id: nextId(ctx, 'c'), card: eff.card, deck: ctx.L.deckOfCard.get(eff.card) ?? '', acquiredTurn: s.turn };
+      p.hand.push(inst);
+      emit(ctx, 'cardDrawn', { card: eff.card, deck: inst.deck, player: p.id }, p.id);
+      afterAcquire(ctx, th, p.id, inst, true);
+      return;
+    }
+    case 'discardCard': {
+      const pid = P(eff.player);
+      const p = findPlayer(ctx, pid);
+      if (!p) return;
+      const cands = p.hand.filter((c) => (eff.card === undefined || c.card === eff.card) && (eff.$deck === undefined || c.deck === eff.$deck));
+      if (!cands.length) return;
+      if (eff.choose && cands.length > 1) {
+        raise(ctx, th, {
+          player: p.id, kind: 'card', label: 'Choose a card to discard', options: cands.map((c) => c.id),
+          optionLabels: cands.map((c) => ctx.L.cards.get(c.card)?.name ?? c.card),
+        }, { k: 'discardCard', player: p.id });
+        return;
+      }
+      discardCardInstance(ctx, p.id, cands[0].id);
+      return;
+    }
+    case 'shuffleDeck': {
+      const d = s.decks[eff.deck];
+      if (!d) return;
+      d.draw = shuffle(rng(ctx), [...d.draw, ...d.discard]);
+      d.discard = [];
+      return;
+    }
+
+    /* ---------------- scoring & state ---------------- */
+    case 'addVP': {
+      const p = findPlayer(ctx, P(eff.player));
+      if (!p) return;
+      const n = evalExpr(ctx, env, eff.amount);
+      p.tokenVP += n;
+      log(ctx, `${p.name} ${n >= 0 ? 'gains' : 'loses'} ${Math.abs(n)} VP${eff.reason ? ` (${eff.reason})` : ''}`, p.id);
+      return;
+    }
+    case 'addStat': {
+      const p = findPlayer(ctx, P(eff.player));
+      if (p) p.stats[eff.key] = (p.stats[eff.key] ?? 0) + evalExpr(ctx, env, eff.amount);
+      return;
+    }
+    case 'setStat': {
+      const p = findPlayer(ctx, P(eff.player));
+      if (p) p.stats[eff.key] = evalExpr(ctx, env, eff.value);
+      return;
+    }
+    case 'addGlobal': s.globals[eff.key] = (s.globals[eff.key] ?? 0) + evalExpr(ctx, env, eff.amount); return;
+    case 'setGlobal': s.globals[eff.key] = evalExpr(ctx, env, eff.value); return;
+    case 'setFlag': {
+      const p = findPlayer(ctx, P(eff.player));
+      if (p) p.flags[eff.flag] = { value: eff.value, until: eff.until ?? 'forever' };
+      return;
+    }
+    case 'grantTradeRate': {
+      const p = findPlayer(ctx, P(eff.player));
+      if (!p) return;
+      const r = eff.resource === 'any' ? 'any' : resolveResource(env, eff.resource);
+      if (!r) return;
+      p.tradeRates.push({ resource: r, ratio: eff.ratio, until: eff.until ?? 'forever' });
+      return;
+    }
+
+    /* ---------------- turn flow ---------------- */
+    case 'rollDice': doRoll(ctx); return;
+    case 'extraBuildPhase': {
+      s.specialBuild = { queue: playersFrom(ctx).slice(1), turnPlayerIndex: s.currentPlayerIndex };
+      return;
+    }
+    case 'endTurn': {
+      pushScoped(ctx, th, env.self, [{ op: '$advanceTurn' }]);
+      if (s.phase !== 'specialBuild') emit(ctx, 'turnEnd', { player: currentPlayerId(s) }, currentPlayerId(s));
+      return;
+    }
+    case 'win': {
+      const pid = P(eff.player);
+      if (!pid || !findPlayer(ctx, pid)) return;
+      s.winner = pid;
+      s.phase = 'gameOver';
+      log(ctx, `${playerName(ctx, pid)} wins!`, pid);
+      return;
+    }
+
+    /* ---------------- internal ---------------- */
+    case '$setupStep': if (s.setupProgress) s.setupProgress.step = eff.step; return;
+    case '$setupNext': advanceSetup(ctx, th); return;
+    case '$startingResources': startingResources(ctx, th, env.self); return;
+    case '$turnStart': turnStart(ctx); return;
+    case '$advanceTurn': advanceTurn(ctx, th); return;
+    case '$afterCardPlay': afterCardPlay(ctx, env.self, eff.instance); return;
+  }
+}
+
+function randomBankResource(ctx: Ctx): Id | null {
+  const opts = ctx.def.resources.filter((r) => bankHas(ctx, r.id) > 0).map((r) => r.id);
+  return opts.length ? opts[randInt(rng(ctx), 0, opts.length - 1)] : null;
+}
+
+/* ------------------------------ piece helpers --------------------------- */
+
+export function addPiece(ctx: Ctx, type: Id, owner: string, at: string): void {
+  const def = ctx.L.pieces.get(type);
+  ctx.s.pieces.push({ id: nextId(ctx, 'pc'), type, owner, at, state: { ...(def?.initialState ?? {}) } });
+  invalidatePieces(ctx);
+}
+
+export function removePieceInstance(ctx: Ctx, id: string): void {
+  ctx.s.pieces = ctx.s.pieces.filter((p) => p.id !== id);
+  invalidatePieces(ctx);
+}
+
+/* ------------------------------ card helpers ---------------------------- */
+
+export function drawCard(ctx: Ctx, deckId: Id, pid: string): CardInstance | null {
+  const d = ctx.s.decks[deckId];
+  const ddef = ctx.L.decks.get(deckId);
+  const p = findPlayer(ctx, pid);
+  if (!d || !p) return null;
+  if (!d.draw.length && ddef?.reshuffleDiscards && d.discard.length) {
+    d.draw = shuffle(rng(ctx), d.discard);
+    d.discard = [];
+  }
+  const card = d.draw.shift();
+  if (!card) return null;
+  const inst: CardInstance = { id: nextId(ctx, 'c'), card, deck: deckId, acquiredTurn: ctx.s.turn };
+  p.hand.push(inst);
+  emit(ctx, 'cardDrawn', { card, deck: deckId, player: pid }, pid);
+  return inst;
+}
+
+/** Hand limits and `immediate` cards after a card is acquired. */
+function afterAcquire(ctx: Ctx, th: Thread, pid: string, inst: CardInstance, skipLimit = false): void {
+  const cdef = ctx.L.cards.get(inst.card);
+  const p = getPlayer(ctx, pid);
+  if (cdef?.play.timing === 'immediate') {
+    p.hand = p.hand.filter((c) => c.id !== inst.id);
+    pushScoped(ctx, th, pid, [...cdef.effect, { op: '$afterCardPlay', instance: inst }]);
+    return;
+  }
+  const limit = ctx.L.decks.get(inst.deck)?.handLimit;
+  if (!skipLimit && limit !== undefined && p.hand.filter((c) => c.deck === inst.deck).length > limit) {
+    pushScoped(ctx, th, pid, [{ op: 'discardCard', player: 'self', choose: true, $deck: inst.deck }]);
+  }
+}
+
+export function discardCardInstance(ctx: Ctx, pid: string, instId: string): void {
+  const p = getPlayer(ctx, pid);
+  const inst = p.hand.find((c) => c.id === instId);
+  if (!inst) return;
+  p.hand = p.hand.filter((c) => c.id !== instId);
+  ctx.s.decks[inst.deck]?.discard.push(inst.card);
+  log(ctx, `${p.name} discards a card`, pid);
+}
+
+function afterCardPlay(ctx: Ctx, pid: string, inst: CardInstance): void {
+  const cdef = ctx.L.cards.get(inst.card);
+  const p = getPlayer(ctx, pid);
+  if (cdef?.countsAs) p.stats[cdef.countsAs] = (p.stats[cdef.countsAs] ?? 0) + 1;
+  const after = cdef?.afterPlay ?? 'keepFaceUp';
+  const d = ctx.s.decks[inst.deck];
+  if (after === 'keepFaceUp' || !d) p.played.push(inst);
+  else if (after === 'discard') d.discard.push(inst.card);
+  else d.draw.push(inst.card);
+  emit(ctx, 'cardPlayed', { card: inst.card, deck: inst.deck, player: pid }, pid);
+}
+
+/* -------------------------------- respond ------------------------------- */
+
+export function respond(ctx: Ctx, pid: string, promptId: string, answer: unknown): void {
+  const pr = ctx.s.prompts.find((p) => p.id === promptId);
+  if (!pr) throw new CommandError('No such prompt');
+  if (pr.player !== pid) throw new CommandError('This prompt is not for you');
+  const th = threads(ctx).find((t) => t.pending?.prompt === promptId);
+  if (!th || !th.pending) throw new CommandError('Prompt is not active');
+  const pending = th.pending;
+
+  if (pending.k === 'discard') {
+    if (!answer || typeof answer !== 'object' || Array.isArray(answer)) throw new CommandError('Answer must be a resource map');
+    const p = getPlayer(ctx, pending.player);
+    let sum = 0;
+    for (const [r, n] of Object.entries(answer as Record<string, unknown>)) {
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) throw new CommandError('Invalid amount');
+      if (n === 0) continue;
+      if (!pr.options.includes(r)) throw new CommandError(`Cannot discard ${r}`);
+      if ((p.resources[r] ?? 0) < n) throw new CommandError(`Not enough ${r}`);
+      sum += n;
+    }
+    if (sum !== pr.amount) throw new CommandError(`Must discard exactly ${pr.amount}`);
+    for (const [r, n] of Object.entries(answer as Record<string, number>)) if (n > 0) moveResource(ctx, p.id, 'bank', r, n);
+    log(ctx, `${p.name} discards ${sum} card(s)`, p.id);
+  } else {
+    let val: string | null;
+    if (answer === null || answer === undefined) {
+      if (!pr.optional) throw new CommandError('An answer is required');
+      val = null;
+    } else {
+      if (typeof answer !== 'string' || !pr.options.includes(answer)) throw new CommandError('Illegal answer');
+      val = answer;
+    }
+    if (pending.k === 'bind') {
+      const scope = th.scopes[pending.sc];
+      if (scope) scope.vars[pending.var] = val;
+      if (pending.then && val !== null) pushBlock(th, pending.sc, pending.then);
+    } else if (pending.k === 'option') {
+      if (val !== null) pushBlock(th, pending.sc, pending.branches[Number(val)] ?? []);
+    } else if (pending.k === 'discardCard') {
+      if (val !== null) discardCardInstance(ctx, pending.player, val);
+    }
+  }
+  ctx.s.prompts = ctx.s.prompts.filter((p) => p.id !== promptId);
+  delete th.pending;
+  flushEvents(ctx, th);
+}
