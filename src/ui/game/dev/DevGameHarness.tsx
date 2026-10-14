@@ -6,7 +6,9 @@ import { useCallback, useMemo, useState } from 'react';
 import type { Command, GameState, Prompt } from '../../../engine/schema';
 import { EngineProvider, estimateVP, type EngineAdapter } from '../engineContext';
 import { GameScreen } from '../GameScreen';
-import { fakeAvailableMoves, fakeRedact, legalEdges, legalVertices, makeFixtureDef, makeFixtureState, ME, samplePrompt } from './fixture';
+import {
+  fakeAvailableMoves, fakeRedact, legalEdges, legalVertices, makeFixtureDef, makeFixtureState, ME, sampleMovePrompt, sampleMultiPrompt, samplePrompt,
+} from './fixture';
 
 const adapter: EngineAdapter = {
   getAvailableMoves: fakeAvailableMoves,
@@ -74,6 +76,21 @@ export function DevGameHarness() {
             const pr = s.prompts.find((p) => p.id === cmd.promptId);
             s = { ...s, prompts: s.prompts.filter((p) => p.id !== cmd.promptId) };
             if (!pr) return s;
+            if (pr.pieceId && typeof cmd.answer === 'string') {
+              const to = cmd.answer;
+              return log({ ...s, pieces: s.pieces.map((p) => (p.id === pr.pieceId ? { ...p, at: to } : p)) }, 'moved a piece', viewer);
+            }
+            if (pr.progress && typeof cmd.answer === 'string') {
+              const pg = pr.progress;
+              const chosen = [...(pg.chosen ?? []), cmd.answer];
+              if (chosen.length >= pg.max) return log(s, `picked ${chosen.length}`, viewer);
+              const next: Prompt = {
+                ...pr, id: `${pr.id}+`, options: pr.options.filter((o) => o !== cmd.answer),
+                optionLabels: pr.optionLabels?.filter((_, i) => pr.options[i] !== cmd.answer),
+                optional: chosen.length >= pg.min ? true : undefined, progress: { ...pg, picked: chosen.length, chosen },
+              };
+              return { ...s, prompts: [next, ...s.prompts] };
+            }
             if (pr.kind === 'location' && typeof cmd.answer === 'string') {
               const a = cmd.answer;
               if (a.startsWith('h:')) return log({ ...s, tokens: { ...s.tokens, robber: a } }, 'moved the robber', viewer);
@@ -144,8 +161,16 @@ export function DevGameHarness() {
           }
           case 'cancelTrade':
             return { ...s, trades: s.trades.filter((t) => t.id !== cmd.tradeId) };
-          case 'doAction':
-            return log(s, `did ${def.actions.find((a) => a.id === cmd.action)?.name}${cmd.pieceId ? ` on ${cmd.pieceId}` : ''}`, viewer);
+          case 'doAction': {
+            const name = def.actions.find((a) => a.id === cmd.action)?.name;
+            const pc = cmd.pieceId ? s.pieces.find((p) => p.id === cmd.pieceId) : undefined;
+            if (pc && cmd.action.startsWith('move')) return { ...s, prompts: [...s.prompts, sampleMovePrompt(s, viewer, pc.id)] };
+            if (pc && (cmd.action === 'activate' || cmd.action === 'promote')) {
+              const st = cmd.action === 'activate' ? { ...pc.state, active: 1 } : { ...pc.state, strength: Math.min(3, (pc.state.strength ?? 0) + 1) };
+              s = { ...s, pieces: s.pieces.map((p) => (p.id === pc.id ? { ...p, state: st } : p)) };
+            }
+            return log(s, `did ${name}${pc ? ` on ${def.pieces.find((d) => d.id === pc.type)?.name}` : ''}`, viewer);
+          }
         }
         return s;
       });
@@ -183,6 +208,11 @@ export function DevGameHarness() {
             {(['location', 'discard', 'resource', 'player', 'card', 'piece', 'option'] as const).map((k) => (
               <button key={k} type="button" onClick={() => addPrompt(k)}>{k}</button>
             ))}
+            <button type="button" onClick={() => setState((s) => ({ ...s, version: s.version + 1, prompts: [...s.prompts, sampleMovePrompt(s, viewer)] }))}>move</button>
+            {(['location', 'player', 'resource'] as const).map((k) => (
+              <button key={`many-${k}`} type="button" onClick={() => setState((s) => ({ ...s, version: s.version + 1, prompts: [...s.prompts, sampleMultiPrompt(s, def, k, viewer)] }))}>many {k}</button>
+            ))}
+            <button type="button" onClick={() => setState((s) => ({ ...s, globals: { ...s.globals, barbarians: ((s.globals.barbarians ?? 0) + 1) % 8 } }))}>barbarians+1</button>
             <button type="button" onClick={() => addPrompt('player', 'p3')}>other prompt</button>
             <button type="button" onClick={() => setState((s) => ({ ...s, prompts: [] }))}>clear prompts</button>
             <button type="button" onClick={() => setState((s) => ({ ...s, settings: { ...s.settings, hideBankCards: !s.settings.hideBankCards } }))}>toggle bank</button>

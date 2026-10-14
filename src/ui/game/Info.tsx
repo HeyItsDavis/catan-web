@@ -4,7 +4,8 @@ import type { GameDefinition, GameState } from '../../engine/schema';
 import { hasIcon, Icon } from '../shared/icons';
 import { useEngine } from './engineContext';
 import { PlayerDot, PlayerName, ResChip } from './chips';
-import { byId } from './util';
+import { faceInfo, globalRows } from './display';
+import { byId, contrastText } from './util';
 
 /* ---------------------------------- dice ---------------------------------- */
 
@@ -54,9 +55,19 @@ export function DiceDisplay({ def, state }: { def: GameDefinition; state: GameSt
       ))}
       {(roll.event ?? []).map((face, i) => {
         const dieDef = def.dice.eventDice?.[i];
+        const f = faceInfo(def, face);
+        const bg = f.color;
+        const fg = bg ? contrastText(bg) : undefined;
         return (
-          <span key={`e${i}`} className="g-eventdie" title={`${dieDef?.id ?? 'event'}: ${face}`}>
-            {hasIcon(face) ? <Icon name={face} size={20} fill="#ddd" /> : face}
+          <span
+            key={`e${i}`}
+            className="g-eventdie"
+            style={bg ? { background: bg, color: fg, borderColor: 'rgba(0,0,0,0.35)' } : undefined}
+            title={`${dieDef?.id ?? 'Event die'}: ${f.label}`}
+            data-face={face}
+          >
+            {f.icon && hasIcon(f.icon) ? <Icon name={f.icon} label={f.label} size={18} fill={bg ? (fg === '#fff' ? '#fff' : '#222') : '#ddd'} /> : null}
+            <span className="g-eventdie-label">{f.label}</span>
           </span>
         );
       })}
@@ -152,6 +163,71 @@ export function BankDisplay({ def, state }: { def: GameDefinition; state: GameSt
         </span>
       ))}
     </div>
+  );
+}
+
+/* -------------------------- globals + awards panel -------------------------- */
+
+/**
+ * Generic "board state" panel: global counters (GameState.globals, labelled by
+ * def.display.globals; `max` draws a track) and every award with its holder.
+ */
+export function GameInfoPanel({ def, state, playerId }: { def: GameDefinition; state: GameState; playerId: string }) {
+  const rows = globalRows(def, state);
+  const awards = def.awards;
+  if (rows.length === 0 && awards.length === 0) return null;
+  return (
+    <section className="g-panel g-info" aria-label="Game info">
+      {rows.length > 0 && (
+        <div className="g-globals">
+          {rows.map((r) => {
+            const pct = r.max ? Math.max(0, Math.min(1, r.value / r.max)) : 0;
+            return (
+              <div key={r.key} className="g-global" title={r.max ? `${r.label}: ${r.value} / ${r.max}` : `${r.label}: ${r.value}`} data-global={r.key}>
+                <span className="g-global-label">
+                  {r.icon && <Icon name={r.icon} label={r.label} size={14} fill={r.color ?? '#ccc'} />}
+                  {r.label}
+                </span>
+                {r.max ? (
+                  r.max <= 16 ? (
+                    <span className="g-track" style={{ ['--tc' as string]: r.color ?? 'var(--g-accent)' }}>
+                      {Array.from({ length: r.max }, (_, i) => (
+                        <i key={i} className={i < r.value ? 'on' : ''} />
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="g-bar" style={{ ['--tc' as string]: r.color ?? 'var(--g-accent)' }}>
+                      <i style={{ width: `${pct * 100}%` }} />
+                    </span>
+                  )
+                ) : null}
+                <b className="g-global-val">{r.value}{r.max ? <span className="g-muted">/{r.max}</span> : null}</b>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {awards.length > 0 && (
+        <div className="g-awards">
+          <h4>Awards</h4>
+          {awards.map((a) => {
+            const holder = state.players.find((p) => p.id === state.awards[a.id]);
+            const keep = a.mode === 'keepUntilBeaten';
+            return (
+              <div key={a.id} className={`g-award${holder ? ' g-award--held' : ''}${holder?.id === playerId ? ' g-award--mine' : ''}`} data-award={a.id}>
+                <Icon name="trophy" size={14} fill={holder ? '#f1c232' : '#777'} />
+                <span className="g-grow">
+                  {a.name}
+                  <span className="g-muted g-small"> +{a.vp} VP{a.min > 0 ? ` · min ${a.min}` : ''}</span>
+                  {keep && <span className="g-tag g-tag--sm" title="Once won, it is kept until another player strictly beats the holder">kept until beaten</span>}
+                </span>
+                {holder ? <PlayerName p={holder} /> : <span className="g-muted g-small">unclaimed</span>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 

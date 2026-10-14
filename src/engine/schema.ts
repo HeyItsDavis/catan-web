@@ -445,6 +445,21 @@ export interface PieceDef {
   pieceActions?: Id[];
   /** Triggers attached to this piece type. */
   triggers?: TriggerDef[];
+  /** Optional presentation hints for the game UI (the engine ignores them). */
+  display?: PieceDisplay;
+}
+
+/**
+ * How the game UI draws a piece's numeric state (PieceInstance.state) and cargo.
+ *  - 'pips'   = one dot per point (knight strength), up to `max` (default 3)
+ *  - 'number' = a small numbered badge
+ *  - 'toggle' = on/off: the piece is drawn dimmed while the value is 0 (inactive knight)
+ * Without `stateBadges` the UI shows non-zero state values as small numbered badges.
+ */
+export interface PieceDisplay {
+  stateBadges?: { key: string; label?: string; icon?: string; style?: 'pips' | 'number' | 'toggle'; max?: number }[];
+  /** Draw cargo chips next to the piece (default true). */
+  showCargo?: boolean;
 }
 
 export interface CardDef {
@@ -568,6 +583,21 @@ export interface TradeRules {
   onlyCurrentPlayer: boolean;
 }
 
+/**
+ * Optional presentation hints for the game UI. The engine ignores them. Merged by key across mods
+ * (same key = replace, new key = add).
+ */
+export interface DisplayHints {
+  /** How to show `GameState.globals` counters (e.g. the barbarian track). `max` draws a progress
+   *  track; `hidden` keeps an internal counter out of the info panel. Unlisted globals are shown
+   *  with a humanized key. */
+  globals?: { key: string; label?: string; max?: number; icon?: string; color?: string; hidden?: boolean }[];
+  /** Labels for per-player stats (PlayerState.stats). `hidden` hides internal counters. */
+  stats?: { key: string; label?: string; icon?: string; hidden?: boolean }[];
+  /** Label / colour / icon for event-die faces (DiceDef.eventDice faces). */
+  eventFaces?: { face: string; label?: string; color?: string; icon?: string }[];
+}
+
 /** Declares a lobby setting the mod exposes; readable via {param} / {setting}. */
 export interface SettingDef {
   id: Id;
@@ -631,6 +661,8 @@ export interface ModDef {
   /** Discard limit on 7 (lobby can override). */
   discardLimit?: number;
   remove?: Partial<Record<CollectionKey, Id[]>>;
+  /** UI presentation hints (globals, stats, event-die faces). */
+  display?: DisplayHints;
 }
 
 export type CollectionKey =
@@ -657,6 +689,8 @@ export interface GameDefinition {
   trade: TradeRules;
   victoryPoints: number;
   discardLimit: number;
+  /** Merged UI presentation hints (optional; absent when no mod declares any). */
+  display?: DisplayHints;
 }
 
 /* ------------------------------------------------------------------------ */
@@ -755,6 +789,12 @@ export interface Prompt {
   optionLabels?: string[];
   /** Piece being placed/moved, for UI previews of location prompts. */
   piece?: Id;
+  /** Movement prompts (movePiece destination): the instance id of the piece being moved.
+   *  Its options are the reachable destinations. */
+  pieceId?: string;
+  /** Multi-select prompts (chooseMany): `picked` so far (ids in `chosen`), at most `max`; the prompt is
+   *  optional ("done") once picked >= min. */
+  progress?: { picked: number; max: number; min: number; chosen?: string[] };
 }
 
 export interface TradeOffer {

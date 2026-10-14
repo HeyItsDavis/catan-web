@@ -3,7 +3,7 @@
  * All geometry comes from engine/board/topology.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { GameDefinition, GameState, HexState, LocationId, PieceInstance } from '../../engine/schema';
+import type { GameDefinition, GameState, HexState, LocationId, PieceDef, PieceInstance } from '../../engine/schema';
 import {
   edgeHexes,
   edgeIdOf,
@@ -15,6 +15,7 @@ import {
   type Point,
 } from '../../engine/board/topology';
 import { IconGlyph } from '../shared/icons';
+import { cargoChips, isShipLike, pieceBadges, pieceInactive, pieceSummary } from './display';
 import { byId, contrastText } from './util';
 
 export const HEX_SIZE = 50;
@@ -24,15 +25,31 @@ export interface BoardPick {
   locations: Set<string>;
   pieces: Set<string>;
   onPick: (id: string) => void;
+  /** 'move' = destinations of a moving piece (drawn distinctly from placements). */
+  mode?: 'place' | 'move' | 'select';
+  /** Instance id of the piece being moved (ringed, and ghosted at its destinations). */
+  movingPieceId?: string;
+  /** Piece type previewed at the highlighted spots. */
+  ghostPiece?: string;
+  /** Already-picked items of a multi-select (location ids or piece instance ids). */
+  chosen?: Set<string>;
 }
 
 interface Props {
   def: GameDefinition;
   state: GameState;
   pick: BoardPick | null;
+  /** Tap / click on a piece that is not a pick option (opens the piece menu). Coordinates are
+   *  relative to the board container. */
+  onPieceTap?: (pieceId: string, at: { x: number; y: number; w: number; h: number }) => void;
+  /** Piece whose menu is open (drawn with a ring). */
+  selectedPiece?: string | null;
 }
 
 interface View { x: number; y: number; w: number; h: number }
+
+/** Minimum hit-target radius in CSS px (fine pointer / touch). */
+const HIT_PX = { fine: 11, coarse: 22 };
 
 const pts = (p: Point[]) => p.map((c) => `${c.x.toFixed(2)},${c.y.toFixed(2)}`).join(' ');
 
@@ -51,8 +68,33 @@ function locationPoint(loc: LocationId): Point {
   return hexToPixel({ q, r }, HEX_SIZE);
 }
 
-export function Board({ def, state, pick }: Props) {
+function useCoarsePointer(): boolean {
+  const [coarse, setCoarse] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(pointer: coarse)');
+    const on = () => setCoarse(mq.matches);
+    mq.addEventListener?.('change', on);
+    return () => mq.removeEventListener?.('change', on);
+  }, []);
+  return coarse;
+}
+
+export function Board({ def, state, pick, onPieceTap, selectedPiece }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const coarse = useCoarsePointer();
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      setBox({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const hexes = useMemo(() => Object.values(state.hexes), [state.hexes]);
 
   /* ------------------------------- bounds -------------------------------- */
@@ -191,12 +233,6 @@ export function Board({ def, state, pick }: Props) {
     };
   }, [bounds.w, unitsPerPx]);
 
-  const click = (id: string) => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (dragged.current) return;
-    pick?.onPick(id);
-  };
-
   /* ------------------------------ lookups -------------------------------- */
   const playerColor = useMemo(() => {
     const m = new Map<string, string>();
@@ -239,18 +275,128 @@ export function Board({ def, state, pick }: Props) {
 
   const hl = pick?.locations ?? new Set<string>();
   const hlPieces = pick?.pieces ?? new Set<string>();
+  const movingId = pick?.movingPieceId;
+  const movingInst = movingId ? state.pieces.find((p) => p.id === movingId) : undefined;
+  const ghostDef = byId(def.pieces, pick?.ghostPiece ?? movingInst?.type);
+  const ghostColor = (movingInst && playerColor.get(movingInst.owner)) || '#ffffff';
+
+  const click = (id: string) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (dragged.current) return;
+    pick?.onPick(id);
+  };
+
+  /** Click on a piece: answer the pick if it is an option, else open its menu. */
+  const pieceClick = (p: PieceInstance) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (dragged.current) return;
+    if (hlPieces.has(p.id)) { pick?.onPick(p.id); return; }
+    if (!onPieceTap) return;
+    const r = wrapRef.current?.getBoundingClientRect();
+    onPieceTap(p.id, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0), w: r?.width ?? 0, h: r?.height ?? 0 });
+  };
+
+  /* --------------------------- hit-target sizing -------------------------- */
+  // SVG units per CSS pixel: hit areas never shrink below HIT_PX on screen (bigger on touch),
+  // capped so neighbouring spots don't swallow each other.
+  const k = box && box.w > 0 && box.h > 0 ? Math.max(view.w / box.w, view.h / box.h) : 1;
+  const hitR = (base: number, cap: number) => Math.min(cap, Math.max(base, (coarse ? HIT_PX.coarse : HIT_PX.fine) * k));
+
+  const interactive = (p: PieceInstance) => hlPieces.has(p.id) || !!onPieceTap;
+  const pieceClass = (p: PieceInstance, pd: PieceDef | undefined) =>
+    ['g-piece', hlPieces.has(p.id) && 'g-piece--pick', interactive(p) && 'g-piece--tap', pieceInactive(pd, p) && 'g-piece--inactive',
+      p.id === movingId && 'g-piece--moving', p.id === selectedPiece && 'g-piece--selected'].filter(Boolean).join(' ');
+  const ringClass = (p: PieceInstance) =>
+    p.id === movingId ? 'g-pick-ring g-moving-ring' : p.id === selectedPiece && !hlPieces.has(p.id) ? 'g-pick-ring g-select-ring' : 'g-pick-ring';
+  const ringed = (p: PieceInstance) => hlPieces.has(p.id) || p.id === selectedPiece || p.id === movingId;
+
+  /** Where a piece is drawn (its tap centre). */
+  const piecePoint = (p: PieceInstance): Point => {
+    const c = locationPoint(p.at);
+    return p.at.startsWith('h:') ? { x: c.x + HEX_SIZE * 0.42, y: c.y + HEX_SIZE * 0.1 } : c;
+  };
+
+  /** A tap that missed every target: resolve it to the NEAREST pickable spot / piece within a
+   *  finger-sized radius (so small, dense targets stay usable on phones without overlapping). */
+  const onBackgroundClick = (e: React.MouseEvent) => {
+    if (dragged.current || !svgRef.current) return;
+    const at = clientToSvg(e.clientX, e.clientY);
+    const maxD = (coarse ? HIT_PX.coarse * 1.4 : HIT_PX.fine * 1.4) * k;
+    let best: { d: number; run: () => void } | null = null;
+    const consider = (pt: Point, run: () => void) => {
+      const d = Math.hypot(pt.x - at.x, pt.y - at.y);
+      if (d <= maxD && (!best || d < best.d)) best = { d, run };
+    };
+    if (pick) {
+      for (const id of hl) if (!id.startsWith('h:')) consider(locationPoint(id), () => pick.onPick(id));
+      for (const p of state.pieces) if (hlPieces.has(p.id)) consider(piecePoint(p), () => pick.onPick(p.id));
+    }
+    if (onPieceTap && !best) {
+      const r = wrapRef.current?.getBoundingClientRect();
+      for (const p of state.pieces) {
+        consider(piecePoint(p), () => onPieceTap(p.id, { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0), w: r?.width ?? 0, h: r?.height ?? 0 }));
+      }
+    }
+    (best as { run: () => void } | null)?.run();
+  };
 
   /* ------------------------------- render -------------------------------- */
   const S = HEX_SIZE;
 
+  /** State badges (pips under the piece, numbers top-left) and cargo chips (top-right). */
+  const pieceDecor = (p: PieceInstance, pd: PieceDef | undefined, x: number, y: number, off: number) => {
+    const badges = pieceBadges(pd, p).filter((b) => b.style !== 'toggle');
+    const cargo = cargoChips(def, pd, p);
+    if (!badges.length && !cargo.length) return null;
+    const pips = badges.filter((b) => b.style === 'pips');
+    const nums = badges.filter((b) => b.style === 'number');
+    const pr = S * 0.045;
+    return (
+      <g className="g-piece-decor" pointerEvents="none">
+        {pips.map((b, row) => {
+          const n = Math.max(b.max, b.value);
+          return (
+            <g key={b.key} className="g-pips">
+              {Array.from({ length: n }, (_, i) => (
+                <circle key={i} cx={x + (i - (n - 1) / 2) * pr * 2.4} cy={y + off + row * pr * 2.6} r={pr} className={i < b.value ? 'g-pip-on' : 'g-pip-off'} />
+              ))}
+            </g>
+          );
+        })}
+        {nums.map((b, i) => {
+          const bx = x - off * 1.05, by = y - off * 0.9 + i * S * 0.21;
+          return (
+            <g key={b.key} className="g-statbadge">
+              <circle cx={bx} cy={by} r={S * 0.1} />
+              <text x={bx} y={by + S * 0.005} textAnchor="middle" dominantBaseline="central" fontSize={S * 0.13}>{b.value}</text>
+            </g>
+          );
+        })}
+        {cargo.map((c, i) => {
+          const cx = x + off * 1.05 + i * S * 0.17, cy = y - off * 0.95;
+          return (
+            <g key={c.key} className="g-cargo">
+              <circle cx={cx} cy={cy} r={S * 0.1} fill={c.color} />
+              <IconGlyph x={cx} y={cy} size={S * 0.14} name={c.icon} label={c.label} fill={c.color} stroke={contrastText(c.color) === '#fff' ? '#fff' : '#222'} />
+              {c.n > 1 && (
+                <text x={cx + S * 0.08} y={cy + S * 0.09} textAnchor="middle" dominantBaseline="central" fontSize={S * 0.11} className="g-cargo-n">{c.n}</text>
+              )}
+            </g>
+          );
+        })}
+      </g>
+    );
+  };
+
   return (
-    <div className="g-board">
+    <div className="g-board" ref={wrapRef}>
       <svg
         ref={svgRef}
         className="g-board-svg"
         viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`}
         preserveAspectRatio="xMidYMid meet"
         onPointerDown={onPointerDown}
+        onClick={onBackgroundClick}
       >
         {/* hexes */}
         <g>
@@ -264,9 +410,16 @@ export function Board({ def, state, pick }: Props) {
             const hot = !hidden && h.number != null && h.number === rolled && !blocked;
             const iconName = hidden ? 'fog' : terrain?.icon;
             const hasNumber = !hidden && h.number != null;
+            const gold = !hidden ? terrain?.producesChoice : undefined;
+            const cls = ['g-hex', terrain?.water && !hidden && 'g-hex--water', hidden && 'g-hex--fog', gold && 'g-hex--gold', hot && 'g-hex--hot']
+              .filter(Boolean).join(' ');
             return (
-              <g key={h.id} className={`g-hex${terrain?.water ? ' g-hex--water' : ''}${hot ? ' g-hex--hot' : ''}`}>
-                <title>{hidden ? 'Unexplored' : `${terrain?.name ?? h.terrain}${h.number != null ? ` (${h.number})` : ''}`}</title>
+              <g key={h.id} className={cls} data-hex={h.id}>
+                <title>
+                  {hidden
+                    ? 'Unexplored'
+                    : `${terrain?.name ?? h.terrain}${h.number != null ? ` (${h.number})` : ''}${gold ? ` — produces ${gold.amount} resource${gold.amount === 1 ? '' : 's'} of your choice` : ''}`}
+                </title>
                 <polygon points={pts(corners)} fill={fill} className="g-hex-shape" />
                 <polygon points={pts(scalePoly(corners, center, 0.9))} className="g-hex-inner" />
                 {(iconName || hidden) && (
@@ -305,6 +458,12 @@ export function Board({ def, state, pick }: Props) {
                         className={h.number === 6 || h.number === 8 ? 'g-pip g-pip--red' : 'g-pip'}
                       />
                     ))}
+                  </g>
+                )}
+                {gold && (
+                  <g className="g-goldbadge">
+                    <circle cx={center.x + S * 0.5} cy={center.y - S * 0.3} r={S * 0.16} />
+                    <IconGlyph x={center.x + S * 0.5} y={center.y - S * 0.3} size={S * 0.22} name="gold" label="Gold" fill="#f6cf3e" stroke="#5b4300" />
                   </g>
                 )}
               </g>
@@ -351,10 +510,14 @@ export function Board({ def, state, pick }: Props) {
           {piecesByKind.h.map((p) => {
             const pd = byId(def.pieces, p.type);
             const c = locationPoint(p.at);
+            const x = c.x + S * 0.42, y = c.y + S * 0.1;
             return (
-              <g key={p.id} className={hlPieces.has(p.id) ? 'g-piece g-piece--pick' : 'g-piece'} onClick={hlPieces.has(p.id) ? click(p.id) : undefined}>
-                <title>{`${pd?.name ?? p.type}`}</title>
-                <IconGlyph x={c.x + S * 0.42} y={c.y + S * 0.1} size={S * 0.36} name={pd?.icon ?? p.type} label={pd?.name} fill={playerColor.get(p.owner) ?? '#aaa'} />
+              <g key={p.id} className={pieceClass(p, pd)} onClick={interactive(p) ? pieceClick(p) : undefined} data-piece={p.id}>
+                <title>{pieceSummary(def, state, p)}</title>
+                {interactive(p) && <circle cx={x} cy={y} r={hitR(S * 0.22, S * 0.4)} className="g-hit" />}
+                <IconGlyph x={x} y={y} size={S * 0.36} name={pd?.icon ?? p.type} label={pd?.name} fill={playerColor.get(p.owner) ?? '#aaa'} />
+                {pieceDecor(p, pd, x, y, S * 0.2)}
+                {ringed(p) && <circle cx={x} cy={y} r={S * 0.26} className={ringClass(p)} />}
               </g>
             );
           })}
@@ -366,24 +529,33 @@ export function Board({ def, state, pick }: Props) {
             const pd = byId(def.pieces, p.type);
             const { a, b, mid } = edgeToPixel(p.at, S);
             const color = playerColor.get(p.owner) ?? '#aaa';
-            const icon = pd?.icon ?? p.type;
-            const pickable = hlPieces.has(p.id);
-            const asBar = !icon || icon === 'road' || !pd?.icon;
+            const ship = isShipLike(pd);
+            const asBar = !ship && (!pd?.icon || pd.icon === 'road');
             const t = 0.18;
             const a2 = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
             const b2 = { x: b.x + (a.x - b.x) * t, y: b.y + (a.y - b.y) * t };
             return (
-              <g key={p.id} className={pickable ? 'g-piece g-piece--pick' : 'g-piece'} onClick={pickable ? click(p.id) : undefined}>
-                <title>{`${pd?.name ?? p.type} — ${state.players.find((x) => x.id === p.owner)?.name ?? p.owner}`}</title>
+              <g key={p.id} className={pieceClass(p, pd)} onClick={interactive(p) ? pieceClick(p) : undefined} data-piece={p.id}>
+                <title>{pieceSummary(def, state, p)}</title>
+                {interactive(p) && <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} className="g-hit" strokeWidth={2 * hitR(S * 0.12, S * 0.24)} />}
                 {asBar ? (
                   <>
                     <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke="#1d1d22" strokeWidth={S * 0.17} strokeLinecap="round" />
                     <line x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y} stroke={color} strokeWidth={S * 0.11} strokeLinecap="round" />
                   </>
                 ) : (
-                  <IconGlyph x={mid.x} y={mid.y} size={S * 0.4} name={icon} label={pd?.name} fill={color} />
+                  <>
+                    {ship && (
+                      <line
+                        x1={a2.x} y1={a2.y} x2={b2.x} y2={b2.y}
+                        stroke={color} strokeWidth={S * 0.05} strokeDasharray={`${S * 0.08} ${S * 0.07}`} strokeLinecap="round" className="g-wake"
+                      />
+                    )}
+                    <IconGlyph x={mid.x} y={mid.y} size={S * (ship ? 0.46 : 0.4)} name={pd?.icon ?? (ship ? 'ship' : p.type)} label={pd?.name} fill={color} />
+                  </>
                 )}
-                {pickable && <circle cx={mid.x} cy={mid.y} r={S * 0.26} className="g-pick-ring" />}
+                {pieceDecor(p, pd, mid.x, mid.y, S * 0.22)}
+                {ringed(p) && <circle cx={mid.x} cy={mid.y} r={S * 0.28} className={ringClass(p)} />}
               </g>
             );
           })}
@@ -394,13 +566,13 @@ export function Board({ def, state, pick }: Props) {
           {piecesByKind.v.map((p) => {
             const pd = byId(def.pieces, p.type);
             const c = vertexToPixel(p.at, S);
-            const pickable = hlPieces.has(p.id);
-            const stateTip = Object.entries(p.state ?? {}).map(([k, v]) => `${k}: ${v}`).join(', ');
             return (
-              <g key={p.id} className={pickable ? 'g-piece g-piece--pick' : 'g-piece'} onClick={pickable ? click(p.id) : undefined}>
-                <title>{`${pd?.name ?? p.type} — ${state.players.find((x) => x.id === p.owner)?.name ?? p.owner}${stateTip ? ` (${stateTip})` : ''}`}</title>
+              <g key={p.id} className={pieceClass(p, pd)} onClick={interactive(p) ? pieceClick(p) : undefined} data-piece={p.id}>
+                <title>{pieceSummary(def, state, p)}</title>
+                {interactive(p) && <circle cx={c.x} cy={c.y} r={hitR(S * 0.26, S * 0.46)} className="g-hit" />}
                 <IconGlyph x={c.x} y={c.y - S * 0.03} size={S * 0.44} name={pd?.icon ?? p.type} label={pd?.name} fill={playerColor.get(p.owner) ?? '#aaa'} />
-                {pickable && <circle cx={c.x} cy={c.y} r={S * 0.3} className="g-pick-ring" />}
+                {pieceDecor(p, pd, c.x, c.y, S * 0.24)}
+                {ringed(p) && <circle cx={c.x} cy={c.y} r={S * 0.3} className={ringClass(p)} />}
               </g>
             );
           })}
@@ -416,7 +588,7 @@ export function Board({ def, state, pick }: Props) {
               const x = onHex ? c.x - S * 0.45 + i * S * 0.3 : c.x;
               const y = onHex ? c.y + S * 0.08 : c.y;
               return (
-                <g key={`${tokId}`} className="g-token">
+                <g key={`${tokId}`} className="g-token" data-token={tokId}>
                   <title>{td?.name ?? tokId}</title>
                   <IconGlyph x={x} y={y} size={S * (onHex ? 0.5 : 0.4)} name={td?.icon ?? tokId} label={td?.name} fill="#2b2b33" stroke="#e8e8e8" />
                 </g>
@@ -427,14 +599,23 @@ export function Board({ def, state, pick }: Props) {
 
         {/* location highlights (prompt) */}
         {pick && (
-          <g className="g-highlights">
+          <g className={`g-highlights${pick.mode === 'move' ? ' g-hl--move' : ''}`}>
+            {ghostDef &&
+              [...hl].map((id) => {
+                const c = locationPoint(id);
+                return (
+                  <g key={`ghost:${id}`} className="g-ghost" pointerEvents="none">
+                    <IconGlyph x={c.x} y={c.y} size={S * 0.34} name={ghostDef.icon ?? (isShipLike(ghostDef) ? 'ship' : ghostDef.id)} label={ghostDef.name} fill={ghostColor} />
+                  </g>
+                );
+              })}
             {[...hl].filter((id) => id.startsWith('h:')).map((id) => {
               const h = state.hexes[id];
               const coord = h?.coord ?? (() => { const [q, r] = id.slice(2).split(',').map(Number); return { q, r }; })();
               const corners = hexCornerPoints(coord, S);
               return (
                 <polygon key={id} points={pts(scalePoly(corners, hexToPixel(coord, S), 0.94))} className="g-hl g-hl-hex" data-loc={id} onClick={click(id)}>
-                  <title>Choose this hex</title>
+                  <title>{pick.mode === 'move' ? 'Move here' : 'Choose this hex'}</title>
                 </polygon>
               );
             })}
@@ -444,7 +625,10 @@ export function Board({ def, state, pick }: Props) {
               return (
                 <g key={id} className="g-hl g-hl-edge" data-loc={id} onClick={click(id)}>
                   <line x1={a.x + (b.x - a.x) * t} y1={a.y + (b.y - a.y) * t} x2={b.x + (a.x - b.x) * t} y2={b.y + (a.y - b.y) * t} className="g-hl-edge-line" strokeWidth={S * 0.14} />
-                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={S * 0.3} />
+                  <line
+                    x1={a.x + (b.x - a.x) * 0.12} y1={a.y + (b.y - a.y) * 0.12} x2={b.x + (a.x - b.x) * 0.12} y2={b.y + (a.y - b.y) * 0.12}
+                    className="g-hit" strokeWidth={2 * hitR(S * 0.15, S * 0.26)}
+                  />
                 </g>
               );
             })}
@@ -452,8 +636,19 @@ export function Board({ def, state, pick }: Props) {
               const c = vertexToPixel(id, S);
               return (
                 <g key={id} className="g-hl g-hl-vertex" data-loc={id} onClick={click(id)}>
-                  <circle cx={c.x} cy={c.y} r={S * 0.3} fill="transparent" />
+                  <circle cx={c.x} cy={c.y} r={hitR(S * 0.3, S * 0.48)} className="g-hit" />
                   <circle cx={c.x} cy={c.y} r={S * 0.13} className="g-hl-vertex-dot" />
+                </g>
+              );
+            })}
+            {[...(pick.chosen ?? [])].map((id) => {
+              const loc = state.pieces.find((x) => x.id === id)?.at ?? id;
+              if (!/^[hve]:/.test(loc)) return null;
+              const c = locationPoint(loc);
+              return (
+                <g key={`chosen:${id}`} className="g-chosen" pointerEvents="none" data-chosen={loc}>
+                  <circle cx={c.x} cy={c.y} r={S * 0.19} />
+                  <text x={c.x} y={c.y + S * 0.01} textAnchor="middle" dominantBaseline="central" fontSize={S * 0.22}>✓</text>
                 </g>
               );
             })}

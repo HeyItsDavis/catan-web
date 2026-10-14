@@ -2,6 +2,7 @@
 import type { ReactNode } from 'react';
 import type { DiceDef, ModDef, SetupRound, TradeRules } from '../../engine/schema';
 import { useEditor } from './context';
+import { DisplayHintsEditor } from './display';
 import { Checkbox, Field, ListInput, NumberInput, NumberMap, RefSelect, Section, Select, TextInput } from './fields';
 
 function Inherit(props: { inherited: boolean; summary: ReactNode; onCustomize(): void; onReset(): void; children: ReactNode }) {
@@ -114,6 +115,10 @@ export function RulesTab(props: { mod: ModDef; onChange(m: ModDef): void }) {
           onReset={() => set('dice', undefined)}>
           {dice ? <DiceEditor value={dice} onChange={d => set('dice', d)} /> : null}
         </Inherit>
+      </Section>
+
+      <Section title="Game screen display" path={['display']} hint="Labels for global counters, player stats and event-die faces (looks only; merged with what this mod extends).">
+        <DisplayHintsEditor value={mod.display} onChange={d => set('display', d)} />
       </Section>
     </div>
   );
