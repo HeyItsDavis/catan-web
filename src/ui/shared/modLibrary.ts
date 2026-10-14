@@ -85,3 +85,13 @@ export function subscribeModLibrary(cb: () => void): () => void {
     if (typeof window !== 'undefined') window.removeEventListener('storage', onStorage);
   };
 }
+
+/** Just the ModDefs, in stored order (the editor's view of the library). */
+export function listModDefs(s?: KV | null): ModDef[] {
+  return readAll(s).map((e) => e.mod);
+}
+
+/** One mod by meta.id. */
+export function getMod(id: string, s?: KV | null): ModDef | undefined {
+  return loadMod(id, s) ?? undefined;
+}
