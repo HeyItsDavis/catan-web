@@ -266,7 +266,7 @@ export class RoomClient {
         return;
       case 'error':
         if (this.snap.status !== 'connected') {
-          // Rejected during hello (room full, version mismatch, seat taken…): retrying won't help.
+          // Rejected during hello (room full, version mismatch, seat takenâ€¦): retrying won't help.
           this.set({ status: 'failed', error: { message: msg.message, at: this.opts.now() } });
           this.dropConn();
           return;

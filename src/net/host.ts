@@ -152,6 +152,17 @@ export class HostRoom {
     this.storage?.removeItem(HOST_SAVE_KEY);
   }
 
+  /** Close the room for everyone: tell guests (so they stop reconnecting), forget the save, shut down. */
+  closeRoom(): void {
+    for (const s of this.identified()) {
+      if (!s.conn.isLocal) this.send(s, { t: 'kicked', reason: 'The host closed the room' });
+    }
+    this.forget();
+    this.storage = null; // late disconnect events must not re-create the save
+    // Give the goodbye messages a moment to flush before tearing down the channels.
+    setTimeout(() => this.destroy(), 300);
+  }
+
   /* ------------------------------------------------------------ connections */
 
   private accept(conn: Connection): void {

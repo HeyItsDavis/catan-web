@@ -104,6 +104,17 @@ describe('HostRoom + RoomClient over memory transport', () => {
     expect(again.getSnapshot().status).toBe('kicked');
   });
 
+  it('closing the room tells guests to stop reconnecting and forgets the save', async () => {
+    const { net, host, storage } = setup();
+    const ann = client(() => net.connect('ABCDEF'), 'ann', 'Ann');
+    await flush();
+    host.closeRoom();
+    await flush();
+    expect(ann.getSnapshot().status).toBe('kicked');
+    expect(ann.getSnapshot().error?.message).toMatch(/closed/);
+    expect(storage.getItem(HOST_SAVE_KEY)).toBeNull();
+  });
+
   it('syncs mods to guests with stable references', async () => {
     const { net, hostClient } = setup();
     const ann = client(() => net.connect('ABCDEF'), 'ann', 'Ann');
