@@ -20,7 +20,7 @@ const EFFECT_OPS = new Set([
   'gain', 'pay', 'transfer', 'steal', 'discard', 'chooseAndGain', 'produce',
   'place', 'upgrade', 'downgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'setTerrain', 'setHexNumber', 'revealHex',
   'loadCargo', 'unloadCargo', 'addCargo',
-  'drawCard', 'giveCard', 'discardCard', 'shuffleDeck',
+  'drawCard', 'giveCard', 'discardCard', 'takeCard', 'shuffleDeck',
   'addVP', 'addStat', 'setStat', 'addGlobal', 'setGlobal', 'setFlag', 'grantTradeRate',
   'rollDice', 'extraBuildPhase', 'endTurn', 'win',
 ]);
@@ -349,7 +349,11 @@ class Validator {
       case 'giveCard': this.ref(`${path}.card`, 'cards', e.card, 'card'); this.player(`${path}.player`, e.player, sc); break;
       case 'discardCard':
         if (e.card !== undefined) this.ref(`${path}.card`, 'cards', e.card, 'card'); this.player(`${path}.player`, e.player, sc); break;
+      case 'takeCard':
+        this.player(`${path}.from`, e.from, sc); this.player(`${path}.to`, e.to, sc);
+        if (e.deck !== undefined) this.ref(`${path}.deck`, 'decks', e.deck, 'deck'); break;
       case 'shuffleDeck': this.ref(`${path}.deck`, 'decks', e.deck, 'deck'); break;
+      case 'rollDice': (e.values ?? []).forEach((v, i) => this.expr(`${path}.values[${i}]`, v, sc)); break;
       case 'addVP': case 'addStat': this.player(`${path}.player`, e.player, sc); this.expr(`${path}.amount`, e.amount, sc); break;
       case 'setStat': this.player(`${path}.player`, e.player, sc); this.expr(`${path}.value`, e.value, sc); break;
       case 'addGlobal': this.expr(`${path}.amount`, e.amount, sc); break;

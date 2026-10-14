@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { baseMod } from '../../content/base/index';
+import { builtinMods } from '../../content/builtins';
 import type { CollectionKey, ModDef } from '../../engine/schema';
 import { contextFromDefinition } from '../../editor/describe';
 import { createHistory, pushHistory, redo, undo, type History } from '../../editor/history';
@@ -149,7 +150,7 @@ export function ModEditor() {
 
   /* ---------------- definitions & context ---------------- */
   const available = useMemo(
-    () => [baseMod, ...library.filter(m => m.meta.id !== storedId && m.meta.id !== mod?.meta.id && m.meta.id !== 'base')],
+    () => [baseMod, ...builtinMods.filter(m => m.meta.id !== mod?.meta.id), ...library.filter(m => m.meta.id !== storedId && m.meta.id !== mod?.meta.id && m.meta.id !== 'base' && !builtinMods.some(b => b.meta.id === m.meta.id))],
     [library, storedId, mod?.meta.id],
   );
   const ctx: EditorCtx | null = useMemo(() => {

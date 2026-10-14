@@ -1,6 +1,7 @@
 import { useRef, useState, useSyncExternalStore, type ChangeEvent } from 'react';
 import type { ModDef } from '../../engine/schema';
 import type { RoomView } from '../../net/useRoom';
+import { builtinMods } from '../../content/builtins';
 import { listMods, MOD_LIBRARY_KEY, parseModJson, saveMod, subscribeModLibrary, type LibraryEntry } from '../shared/modLibrary';
 
 // listMods() returns a new array each call; cache by raw storage string for useSyncExternalStore.
@@ -22,6 +23,7 @@ export function ModsPanel({ room }: { room: RoomView }) {
 
   const inRoom = new Set(mods.map((m) => m.meta.id));
   const available = library.filter((e) => !inRoom.has(e.mod.meta.id));
+  const builtinAvailable = builtinMods.filter((m) => !inRoom.has(m.meta.id));
 
   const addMod = (mod: ModDef) => {
     if (mod.meta.id === 'base') { setMsg('The base game is always included.'); return; }
@@ -80,7 +82,7 @@ export function ModsPanel({ room }: { room: RoomView }) {
               {m.meta.description && <span className="small">{m.meta.description}</span>}
             </div>
             <div className="mod-actions">
-              {!library.some((e) => e.mod.meta.id === m.meta.id) && (
+              {!library.some((e) => e.mod.meta.id === m.meta.id) && !builtinMods.some((b) => b.meta.id === m.meta.id) && (
                 <button className="btn ghost small" title="Save to my library" onClick={() => saveToLibrary(m)}>💾</button>
               )}
               {isHost && (
@@ -98,7 +100,23 @@ export function ModsPanel({ room }: { room: RoomView }) {
 
       {isHost && (
         <div className="mod-add">
-          <h3 className="settings-sub">Add mods</h3>
+          {builtinAvailable.length > 0 && (
+            <>
+              <h3 className="settings-sub">Expansions &amp; variants</h3>
+              <ul className="mod-library">
+                {builtinAvailable.map((m) => (
+                  <li key={m.meta.id} className="mod-row">
+                    <div className="mod-info">
+                      <strong>{m.meta.name}</strong>
+                      {m.meta.description && <span className="muted small">{m.meta.description}</span>}
+                    </div>
+                    <button className="btn small" onClick={() => addMod(m)}>Add</button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <h3 className="settings-sub">My mods</h3>
           {available.length > 0 ? (
             <ul className="mod-library">
               {available.map((e) => (

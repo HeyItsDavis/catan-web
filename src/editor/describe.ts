@@ -458,6 +458,10 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
       const what = e.card ? article(nm(ctx, 'cards', e.card)) + ' card' : 'a card';
       return `${act(e.player, ctx, 'discard', 'discards')} ${what}${e.choose ? ' of their choice' : ''}`;
     }
+    case 'takeCard': {
+      const from = e.deck ? `a ${nm(ctx, 'decks', e.deck)} card` : 'a card';
+      return `${act(e.to, ctx, 'take', 'takes')} ${from} from ${describePlayer(e.from, ctx)}${e.choose ? ' (looking at their hand and choosing)' : ' at random'}`;
+    }
     case 'shuffleDeck': return `shuffle ${nm(ctx, 'decks', e.deck)}`;
     case 'addVP': {
       const amt = describeExpr(e.amount, ctx);
@@ -468,7 +472,9 @@ export function describeEffect(e: Effect, ctx: DescribeContext = {}): string {
     case 'addGlobal': return `add ${describeExpr(e.amount, ctx)} to the “${e.key}” counter`;
     case 'setGlobal': return `set the “${e.key}” counter to ${describeExpr(e.value, ctx)}`;
     case 'setFlag': return `turn ${e.value ? 'on' : 'off'} ${possessive(e.player, ctx)} “${e.flag}” flag${untilText(e.until)}`;
-    case 'rollDice': return 'roll the dice';
+    case 'rollDice': return e.values?.length
+      ? `roll the dice with the number dice set to ${e.values.map((v) => describeExpr(v, ctx)).join(' and ')}`
+      : 'roll the dice';
     case 'extraBuildPhase': return 'start a special building phase';
     case 'endTurn': return 'end the turn';
     case 'win': return e.player === undefined || e.player === 'self' ? 'you win the game' : `${describePlayer(e.player, ctx)} wins the game`;
