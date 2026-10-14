@@ -16,9 +16,10 @@ export interface Problem { path: string; message: string; severity: 'error' | 'w
 
 const EFFECT_OPS = new Set([
   'sequence', 'repeat', 'if', 'forEachPlayer', 'forEachPiece', 'chooseOption', 'setVar', 'emit', 'log', 'abortIf',
-  'choosePlayer', 'chooseResource', 'chooseLocation', 'choosePiece',
+  'choosePlayer', 'chooseResource', 'chooseLocation', 'choosePiece', 'chooseMany',
   'gain', 'pay', 'transfer', 'steal', 'discard', 'chooseAndGain', 'produce',
-  'place', 'upgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'setTerrain', 'setHexNumber', 'revealHex',
+  'place', 'upgrade', 'downgrade', 'remove', 'movePiece', 'setPieceState', 'moveToken', 'setTerrain', 'setHexNumber', 'revealHex',
+  'loadCargo', 'unloadCargo', 'addCargo',
   'drawCard', 'giveCard', 'discardCard', 'shuffleDeck',
   'addVP', 'addStat', 'setStat', 'addGlobal', 'setGlobal', 'setFlag', 'grantTradeRate',
   'rollDice', 'extraBuildPhase', 'endTurn', 'win',
@@ -27,11 +28,11 @@ const EFFECT_OPS = new Set([
 const COND_KEYS = [
   'all', 'any', 'not', 'cmp', 'canAfford', 'isTurnOf', 'phase', 'hasRolled', 'flag', 'setting', 'samePlayer', 'varSet',
   'terrainIs', 'isWater', 'isCoastal', 'occupied', 'adjacentTo', 'connectedTo', 'distanceRule', 'hasToken', 'hexNumberIn',
-  'isAdjacent',
+  'isAdjacent', 'isNetworkEnd', 'sameRegion',
 ];
 const EXPR_KEYS = [
   'var', 'param', 'add', 'sub', 'mul', 'div', 'min', 'max', 'if', 'random', 'resourceCount', 'pieceCount', 'cardCount',
-  'stat', 'global', 'vp', 'dice', 'playerCount', 'longestRoad',
+  'stat', 'global', 'vp', 'dice', 'playerCount', 'longestRoad', 'pieceState', 'sumPieceState', 'cargoCount',
 ];
 const PHASES = ['setup', 'preRoll', 'main', 'specialBuild', 'gameOver'];
 const KINDS = ['hex', 'vertex', 'edge'];
@@ -89,6 +90,11 @@ class Validator {
     if (q.piece !== undefined) (Array.isArray(q.piece) ? q.piece : [q.piece]).forEach((p, i) => this.ref(`${path}.piece${Array.isArray(q.piece) ? `[${i}]` : ''}`, 'pieces', p, 'piece'));
     if (q.near !== undefined) this.varUse(`${path}.near`, q.near, sc);
     q.onTerrain?.forEach((t, i) => this.ref(`${path}.onTerrain[${i}]`, 'terrains', t, 'terrain'));
+    if (q.region !== undefined) this.varUse(`${path}.region`, q.region, sc);
+    if (q.state !== undefined && (typeof q.state !== 'object' || Object.values(q.state).some((v) => typeof v !== 'number'))) {
+      this.err(`${path}.state`, 'state must map keys to numbers');
+    }
+    if (q.where !== undefined) this.cond(`${path}.where`, q.where, { vars: new Set([...sc.vars, 'candidate', 'candidateId']), lenient: sc.lenient });
   }
   setting(path: string, id: unknown) {
     if (typeof id !== 'string' || !isKnownSetting(this.def, id)) this.warn(path, `Unknown setting "${String(id)}"`);
@@ -132,6 +138,9 @@ class Validator {
       case 'stat': this.player(`${path}.stat.player`, (x.stat as { player?: PlayerRef })?.player, sc); break;
       case 'vp': this.player(`${path}.vp`, x.vp as PlayerRef, sc); break;
       case 'longestRoad': this.player(`${path}.longestRoad`, x.longestRoad as PlayerRef, sc); break;
+      case 'pieceState': this.varUse(`${path}.pieceState.piece`, (x.pieceState as { piece?: string })?.piece, sc); break;
+      case 'cargoCount': this.varUse(`${path}.cargoCount.piece`, (x.cargoCount as { piece?: string })?.piece, sc); break;
+      case 'sumPieceState': this.query(`${path}.sumPieceState.query`, (x.sumPieceState as { query: PieceQuery })?.query, sc); break;
     }
   }
 
@@ -170,7 +179,16 @@ class Validator {
       case 'setting': this.setting(`${path}.setting`, x.setting); break;
       case 'samePlayer': (x.samePlayer as PlayerRef[]).forEach((r, i) => this.player(`${path}.samePlayer[${i}]`, r, sc)); break;
       case 'varSet': break;
-      case 'isAdjacent': (x.isAdjacent as string[]).forEach((v, i) => this.varUse(`${path}.isAdjacent[${i}]`, v, sc)); break;
+      case 'isAdjacent': case 'sameRegion':
+        if (!Array.isArray(x[k]) || (x[k] as string[]).length !== 2) { this.err(`${path}.${k}`, 'Expected [location, location]'); break; }
+        (x[k] as string[]).forEach((v, i) => this.varUse(`${path}.${k}[${i}]`, v, sc)); break;
+      case 'isNetworkEnd': {
+        const q = x.isNetworkEnd as { at: string; owner?: PlayerRef; via?: string[] };
+        at(q, `${path}.isNetworkEnd`);
+        this.player(`${path}.isNetworkEnd.owner`, q?.owner, sc);
+        q?.via?.forEach((p, i) => this.ref(`${path}.isNetworkEnd.via[${i}]`, 'pieces', p, 'piece'));
+        break;
+      }
       case 'terrainIs': {
         const q = x.terrainIs as { at: string; terrain: string | string[] };
         at(q, `${path}.terrainIs`);
@@ -227,7 +245,21 @@ class Validator {
         this.cond(`${path}.filter`, e.filter, withVar(e.as)); bindVar(e.as); this.effects(`${path}.do`, e.do, sc);
         if (e.order !== undefined && e.order !== 'turn' && e.order !== 'simultaneous') this.err(`${path}.order`, 'order must be "turn" or "simultaneous"');
         break;
-      case 'forEachPiece': this.query(`${path}.query`, e.query, sc); bindVar(e.as); this.effects(`${path}.do`, e.do, sc); break;
+      case 'forEachPiece': this.query(`${path}.query`, e.query, sc); bindVar(e.as); bindVar(e.asId); this.effects(`${path}.do`, e.do, sc); break;
+      case 'chooseMany': {
+        if (!['player', 'location', 'piece', 'resource'].includes(e.of)) this.err(`${path}.of`, 'of must be player, location, piece or resource');
+        if (!e.as) this.err(`${path}.as`, 'chooseMany needs "as"');
+        this.player(`${path}.player`, e.player, sc);
+        this.expr(`${path}.count`, e.count, sc);
+        if (e.min !== undefined) this.expr(`${path}.min`, e.min, sc);
+        if (e.kind !== undefined && !KINDS.includes(e.kind)) this.err(`${path}.kind`, `kind must be one of ${KINDS.join(', ')}`);
+        if (e.query !== undefined) this.query(`${path}.query`, e.query, sc);
+        e.options?.forEach((r, i) => this.ref(`${path}.options[${i}]`, 'resources', r, 'resource'));
+        this.cond(`${path}.filter`, e.filter, withVar(e.as));
+        bindVar(e.as); bindVar(e.countAs);
+        this.effects(`${path}.do`, e.do, sc);
+        break;
+      }
       case 'chooseOption':
         this.player(`${path}.player`, e.player, sc);
         if (!Array.isArray(e.options) || !e.options.length) this.err(`${path}.options`, 'chooseOption needs options');
@@ -249,7 +281,7 @@ class Validator {
         this.cond(`${path}.filter`, e.filter, withVar(e.as)); bindVar(e.as); break;
       case 'choosePiece':
         this.player(`${path}.player`, e.player, sc); this.query(`${path}.query`, e.query, sc);
-        this.cond(`${path}.filter`, e.filter, withVar(e.as)); bindVar(e.as); break;
+        this.cond(`${path}.filter`, e.filter, withVar(e.as)); bindVar(e.as); bindVar(e.asId); break;
       case 'gain': case 'pay': this.player(`${path}.player`, e.player, sc); this.resMap(`${path}.resources`, e.resources, sc); break;
       case 'transfer':
         this.player(`${path}.from`, e.from, sc); this.player(`${path}.to`, e.to, sc);
@@ -267,13 +299,33 @@ class Validator {
         this.player(`${path}.player`, e.player, sc); break;
       case 'place':
         this.ref(`${path}.piece`, 'pieces', e.piece, 'piece'); this.player(`${path}.player`, e.player, sc);
-        this.loc(`${path}.location`, e.location, sc); bindVar(e.as); break;
+        this.loc(`${path}.location`, e.location, sc); bindVar(e.as); bindVar(e.asId); break;
       case 'upgrade':
         (Array.isArray(e.from) ? e.from : [e.from]).forEach((p) => this.ref(`${path}.from`, 'pieces', p, 'piece'));
         this.ref(`${path}.to`, 'pieces', e.to, 'piece'); this.player(`${path}.player`, e.player, sc);
-        this.loc(`${path}.location`, e.location, sc); bindVar(e.as); break;
+        this.loc(`${path}.location`, e.location, sc); bindVar(e.as); bindVar(e.asId); break;
       case 'remove': this.query(`${path}.query`, e.query, sc); this.loc(`${path}.location`, e.location, sc); bindVar(e.as); break;
-      case 'movePiece': this.query(`${path}.query`, e.query, sc); this.loc(`${path}.from`, e.from, sc); this.loc(`${path}.to`, e.to, sc); break;
+      case 'movePiece':
+        this.query(`${path}.query`, e.query, sc); this.loc(`${path}.from`, e.from, sc); this.loc(`${path}.to`, e.to, sc);
+        this.player(`${path}.player`, e.player, sc);
+        if (e.maxSteps !== undefined) this.expr(`${path}.maxSteps`, e.maxSteps, sc);
+        if (e.path !== undefined) this.cond(`${path}.path`, e.path, { vars: new Set([...sc.vars, 'at', 'prev', 'via']), lenient: sc.lenient });
+        bindVar(e.as); bindVar(e.asId); bindVar(e.stepsAs); break;
+      case 'downgrade':
+        (Array.isArray(e.from) ? e.from : [e.from]).forEach((p) => this.ref(`${path}.from`, 'pieces', p, 'piece'));
+        this.ref(`${path}.to`, 'pieces', e.to, 'piece'); this.player(`${path}.player`, e.player, sc);
+        this.loc(`${path}.location`, e.location, sc); bindVar(e.as); bindVar(e.asId); break;
+      case 'loadCargo':
+        this.varUse(`${path}.piece`, e.piece, sc); this.player(`${path}.player`, e.player, sc);
+        this.resRef(`${path}.resource`, e.resource, sc, ['choice']);
+        if (e.amount !== undefined) this.expr(`${path}.amount`, e.amount, sc); break;
+      case 'unloadCargo':
+        this.varUse(`${path}.piece`, e.piece, sc); this.player(`${path}.to`, e.to, sc);
+        this.resRef(`${path}.resource`, e.resource, sc, ['all']);
+        if (e.amount !== undefined) this.expr(`${path}.amount`, e.amount, sc); break;
+      case 'addCargo':
+        this.varUse(`${path}.piece`, e.piece, sc); this.expr(`${path}.amount`, e.amount, sc);
+        if (typeof e.key !== 'string' || !e.key) this.err(`${path}.key`, 'addCargo needs a goods key'); break;
       case 'setPieceState': this.varUse(`${path}.at`, e.at, sc); this.expr(`${path}.value`, e.value, sc); break;
       case 'moveToken': this.ref(`${path}.token`, 'tokens', e.token, 'token'); this.loc(`${path}.to`, e.to, sc); bindVar(e.as); break;
       case 'setTerrain': this.varUse(`${path}.at`, e.at, sc); this.ref(`${path}.terrain`, 'terrains', e.terrain, 'terrain'); break;

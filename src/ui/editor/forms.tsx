@@ -139,6 +139,12 @@ export function PieceForm(props: FormProps<PieceDef>) {
         <Field label="Network" path={[...path, 'network']} help="Pieces with the same network link up for longest-road style networks (e.g. roads).">
           <SuggestInput value={v.network} onChange={x => set('network', x || undefined)} suggestions={networks} placeholder="roads" />
         </Field>
+        {v.network ? (
+          <Field label="Switch network type" path={[...path, 'networkSwitchAt']} help="In a mixed network (roads + ships), where a route may change from this piece type to another.">
+            <Select value={v.networkSwitchAt ?? 'anyVertex'} onChange={x => set('networkSwitchAt', x === 'anyVertex' ? undefined : x as PieceDef['networkSwitchAt'])}
+              options={[{ value: 'anyVertex', label: 'Anywhere' }, { value: 'ownPiece', label: 'Only at own building' }]} />
+          </Field>
+        ) : null}
         <Field label="Breaks networks" path={[...path, 'breaksNetworks']}>
           <Checkbox value={v.breaksNetworks ?? v.placement?.on === 'vertex'} onChange={x => set('breaksNetworks', x)} />
         </Field>
@@ -405,6 +411,10 @@ export function AwardForm(props: FormProps<AwardDef>) {
         <Field label="Victory points" path={[...path, 'vp']}><NumberInput value={v.vp} onChange={n => onChange({ ...v, vp: n ?? 0 })} small /></Field>
         <Field label="Minimum score" path={[...path, 'min']}><NumberInput value={v.min} onChange={n => onChange({ ...v, min: n ?? 0 })} small /></Field>
         <Field label="Holder keeps on tie" path={[...path, 'holderKeepsOnTie']}><Checkbox value={v.holderKeepsOnTie} onChange={x => onChange({ ...v, holderKeepsOnTie: x || undefined })} /></Field>
+        <Field label="Once won" path={[...path, 'mode']} help="“Kept until beaten”: the holder keeps it even if their score drops, until someone strictly beats them (metropolis).">
+          <Select value={v.mode ?? 'highest'} onChange={x => { const c = { ...v }; if (x === 'highest') delete c.mode; else c.mode = x as AwardDef['mode']; onChange(c); }}
+            options={[{ value: 'highest', label: 'Goes to the current leader' }, { value: 'keepUntilBeaten', label: 'Kept until beaten' }]} />
+        </Field>
       </div>
       <Section title="Score (per player)" path={[...path, 'metric']} hint="“You” means the player being scored.">
         <ExprEditor value={v.metric} onChange={metric => onChange({ ...v, metric: metric ?? 0 })} path={[...path, 'metric']} scope={[]} />

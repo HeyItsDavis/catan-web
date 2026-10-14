@@ -60,6 +60,13 @@ export function innerScope(e: Effect, paramName: string, scope: VarInfo[]): VarI
   }
   if (e.op === 'chooseLocation' && paramName === 'filter') extra.push(AT_LOCATION);
   if ((e.op === 'choosePiece' && paramName === 'filter')) extra.push({ name: 'at', type: 'location', source: 'Candidate piece location' });
+  if (e.op === 'movePiece' && paramName === 'path') {
+    extra.push(
+      { name: 'at', type: 'location', source: 'Next step' },
+      { name: 'prev', type: 'location', source: 'Previous step' },
+      { name: 'via', type: 'location', source: 'What connects the two steps' },
+    );
+  }
   const target = spec.params.find(p => p.name === paramName);
   if (target?.kind === 'locationChoice') extra.push(AT_LOCATION);
   return mergeScope(scope, extra);
@@ -67,6 +74,14 @@ export function innerScope(e: Effect, paramName: string, scope: VarInfo[]): VarI
 
 export function atScope(): VarInfo[] {
   return [AT_LOCATION];
+}
+
+/** Vars visible inside a PieceQuery `where`: the candidate piece. */
+export function candidateScope(): VarInfo[] {
+  return [
+    { name: 'candidate', type: 'location', source: 'Candidate piece location' },
+    { name: 'candidateId', type: 'piece', source: 'Candidate piece' },
+  ];
 }
 
 export function eventScope(event: string): VarInfo[] {

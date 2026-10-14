@@ -78,7 +78,7 @@ export interface ParamSpec {
   /** varRef / locationVar: what the referenced var should hold. */
   varType?: VarType;
   /** key: which namespace the key lives in (used for suggestions). */
-  keySpace?: 'stat' | 'global' | 'flag' | 'pieceState';
+  keySpace?: 'stat' | 'global' | 'flag' | 'pieceState' | 'cargo';
   /** expr: null is allowed (e.g. setHexNumber clears the number). */
   nullable?: boolean;
   help?: string;
@@ -120,6 +120,11 @@ const P = {
     ({ name, label: name === 'amount' ? 'Amount' : cap(name), kind: 'expr', default: def, optional }),
   kind: (): ParamSpec => ({ name: 'kind', label: 'Resource kind', kind: 'resourceKind', optional: true }),
   at: (label = 'Location'): ParamSpec => ({ name: 'at', label, kind: 'locationVar', varType: 'location', default: 'at' }),
+  asId: (def: string, loopVar = false): ParamSpec => ({
+    name: 'asId', label: 'Remember the piece as', kind: 'varName', binds: 'piece', optional: true, default: def, loopVar,
+    help: 'Optional: remembers this exact piece (not just its spot), e.g. to load cargo onto it or move it later.',
+  }),
+  piece: (): ParamSpec => ({ name: 'piece', label: 'Piece', kind: 'locationVar', varType: 'piece', default: 'pieceId', help: 'A remembered piece (or a spot: the first piece there).' }),
 };
 
 function cap(s: string): string { return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -176,6 +181,7 @@ export const EFFECTS: EffectCatalog = {
     params: [
       { name: 'query', label: 'Pieces', kind: 'pieceQuery', default: { owner: 'self' } },
       P.as('piece', 'piece', false, true),
+      P.asId('pieceId', true),
       { name: 'do', label: 'Steps', kind: 'effects' },
     ],
     make: () => ({ op: 'forEachPiece', query: { owner: 'self' }, as: 'piece', do: [] }),
@@ -272,8 +278,28 @@ export const EFFECTS: EffectCatalog = {
       { name: 'filter', label: 'Only where', kind: 'condition', optional: true },
       P.label(),
       P.optional(),
+      P.asId('pieceId'),
     ],
     make: () => ({ op: 'choosePiece', as: 'piece', query: { owner: 'self' } }),
+  },
+  chooseMany: {
+    key: 'chooseMany', label: 'Choose several', category: 'Choices', shape: 'flat',
+    description: 'Ask a player to pick several different players, spots, pieces or resource types (one at a time), then run the steps once for each pick.',
+    params: [
+      { name: 'of', label: 'Pick', kind: 'enum', options: ['player', 'location', 'piece', 'resource'], default: 'player' },
+      { name: 'count', label: 'Up to', kind: 'expr', default: 2 },
+      { name: 'min', label: 'At least', kind: 'expr', optional: true, default: 0, help: 'The player may stop after this many picks. Default: must pick all.' },
+      P.player('Who chooses'),
+      P.as('any', 'pick', false, true),
+      { name: 'filter', label: 'Only where', kind: 'condition', optional: true, help: 'The candidate is available under the “Call each one” name.' },
+      { name: 'kind', label: 'Location type', kind: 'locationKind', optional: true, help: 'For picking locations.' },
+      { name: 'query', label: 'From pieces', kind: 'pieceQuery', optional: true, help: 'For picking pieces.' },
+      { name: 'options', label: 'Allowed resources', kind: 'resourceIds', optional: true, help: 'For picking resources.' },
+      P.label(),
+      { name: 'countAs', label: 'Remember how many as', kind: 'varName', binds: 'number', optional: true, default: 'picked' },
+      { name: 'do', label: 'For each pick', kind: 'effects' },
+    ],
+    make: () => ({ op: 'chooseMany', of: 'player', count: 2, as: 'pick', do: [] }),
   },
 
   /* --- resources --- */
@@ -360,6 +386,7 @@ export const EFFECTS: EffectCatalog = {
       { name: 'ignoreConnection', label: 'Ignore connection', kind: 'boolean', optional: true },
       { name: 'location', label: 'Where', kind: 'locationChoice', optional: true },
       P.as('location', 'placed', true),
+      P.asId('placedId'),
     ],
     make: () => ({ op: 'place', piece: '', free: true }),
   },
@@ -373,8 +400,22 @@ export const EFFECTS: EffectCatalog = {
       { name: 'free', label: 'Free', kind: 'boolean', optional: true },
       { name: 'location', label: 'Where', kind: 'locationChoice', optional: true },
       P.as('location', 'upgraded', true),
+      P.asId('upgradedId'),
     ],
     make: () => ({ op: 'upgrade', from: '', to: '' }),
+  },
+  downgrade: {
+    key: 'downgrade', label: 'Downgrade a piece', category: 'Board', shape: 'flat',
+    description: 'Replace a player’s piece with a lesser one at the same spot (city → settlement). Their choice; free. If none of the lesser piece is left, the piece is lost.',
+    params: [
+      { name: 'from', label: 'From', kind: 'pieceIds', multiple: 'either', default: '' },
+      { name: 'to', label: 'To', kind: 'pieceId', default: '' },
+      P.player('Whose piece', 'The owner, who also picks which one. Defaults to the player running this.'),
+      { name: 'location', label: 'Where', kind: 'locationChoice', optional: true },
+      P.as('location', 'downgraded', true),
+      P.asId('downgradedId'),
+    ],
+    make: () => ({ op: 'downgrade', from: '', to: '' }),
   },
   remove: {
     key: 'remove', label: 'Remove a piece', category: 'Board', shape: 'flat',
@@ -389,11 +430,18 @@ export const EFFECTS: EffectCatalog = {
   },
   movePiece: {
     key: 'movePiece', label: 'Move a piece', category: 'Board', shape: 'flat',
-    description: 'Move a piece from one location to another.',
+    description: 'Move a piece to a new spot that follows its placement rules (or anywhere allowed), optionally only within a number of steps along an allowed path.',
     params: [
       { name: 'query', label: 'Which pieces', kind: 'pieceQuery', default: { owner: 'self' } },
       { name: 'from', label: 'From', kind: 'locationChoice', optional: true },
       { name: 'to', label: 'To', kind: 'locationChoice', optional: true },
+      P.player('Who chooses', 'Defaults to the player running this. Use “the owner of …” to make another player move their piece.'),
+      { name: 'anywhere', label: 'Ignore placement rules', kind: 'boolean', optional: true, help: 'Only the “To … where” check applies.' },
+      { name: 'maxSteps', label: 'Within steps', kind: 'expr', optional: true, default: 3, help: 'Movement range: steps between neighbouring spots of the same kind.' },
+      { name: 'path', label: 'Each step allowed where', kind: 'condition', optional: true, help: 'Checked for every step: `at` = next spot, `prev` = previous spot, `via` = what connects them.' },
+      { name: 'stepsAs', label: 'Remember steps used as', kind: 'varName', binds: 'number', optional: true, default: 'steps' },
+      P.as('location', 'movedTo', true),
+      P.asId('movedId'),
     ],
     make: () => ({ op: 'movePiece', query: { owner: 'self' } }),
   },
@@ -406,6 +454,38 @@ export const EFFECTS: EffectCatalog = {
       { name: 'value', label: 'Value', kind: 'expr', default: 1 },
     ],
     make: () => ({ op: 'setPieceState', at: 'piece', key: 'active', value: 1 }),
+  },
+  loadCargo: {
+    key: 'loadCargo', label: 'Load cargo', category: 'Board', shape: 'flat',
+    description: 'Move resource cards from a player’s hand onto a piece (a wagon, a ship). They travel with it.',
+    params: [
+      P.piece(),
+      P.player('From player'),
+      { name: 'resource', label: 'Resource', kind: 'resourceRef', extra: ['choice'], default: 'choice' },
+      P.amount('amount', 1, true),
+    ],
+    make: () => ({ op: 'loadCargo', piece: 'pieceId', resource: 'choice' }),
+  },
+  unloadCargo: {
+    key: 'unloadCargo', label: 'Unload cargo', category: 'Board', shape: 'flat',
+    description: 'Move resource cargo off a piece into a player’s hand (or back to the bank).',
+    params: [
+      P.piece(),
+      { name: 'to', label: 'To', kind: 'playerRef', optional: true, help: 'Defaults to the player running this. “The bank” returns it.' },
+      { name: 'resource', label: 'Resource', kind: 'resourceRef', extra: ['all'], optional: true, default: 'all' },
+      { name: 'amount', label: 'Amount', kind: 'expr', optional: true, default: 1, help: 'Leave out to unload all of it.' },
+    ],
+    make: () => ({ op: 'unloadCargo', piece: 'pieceId' }),
+  },
+  addCargo: {
+    key: 'addCargo', label: 'Add goods to a piece', category: 'Board', shape: 'flat',
+    description: 'Put (or with a negative amount, take away) goods on a piece, e.g. a settler on a ship. Not taken from anyone’s hand.',
+    params: [
+      P.piece(),
+      { name: 'key', label: 'Goods', kind: 'key', keySpace: 'cargo', default: 'settler' },
+      P.amount(),
+    ],
+    make: () => ({ op: 'addCargo', piece: 'pieceId', key: 'settler', amount: 1 }),
   },
   moveToken: {
     key: 'moveToken', label: 'Move a token', category: 'Board', shape: 'flat',
@@ -694,8 +774,11 @@ export const CONDITIONS: ConditionCatalog = {
   },
   hasToken: {
     key: 'hasToken', label: 'Has token', category: 'Board', shape: 'object',
-    description: 'True when a token (e.g. the robber) is on the location.',
-    params: [at(), { name: 'token', label: 'Token', kind: 'tokenId', default: '' }],
+    description: 'True when a token (e.g. the robber) is on the location — or, with “or next to it”, on a neighbouring spot (a pirate blocks the edges of its hex).',
+    params: [
+      at(), { name: 'token', label: 'Token', kind: 'tokenId', default: '' },
+      { name: 'near', label: 'Or next to it', kind: 'boolean', optional: true },
+    ],
     make: () => ({ hasToken: { at: 'at', token: '' } }),
   },
   isAdjacent: {
@@ -712,6 +795,25 @@ export const CONDITIONS: ConditionCatalog = {
     description: 'True when the hex’s number token is one of these numbers.',
     params: [at(), { name: 'numbers', label: 'Numbers', kind: 'numbers', default: [6, 8] }],
     make: () => ({ hexNumberIn: { at: 'at', numbers: [6, 8] } }),
+  },
+  isNetworkEnd: {
+    key: 'isNetworkEnd', label: 'Is an open end of a route', category: 'Board', shape: 'object',
+    description: 'True when the road/ship on this edge is at a loose end of its owner’s route (one end touches none of their buildings or other route pieces). Seafarers: only such ships may move.',
+    params: [
+      at('Edge'),
+      { name: 'owner', label: 'Owner', kind: 'playerRef', optional: true, help: 'Defaults to the owner of the piece on the edge.' },
+      { name: 'via', label: 'Route pieces', kind: 'pieceIds', multiple: 'list', optional: true, help: 'Which pieces form the route. Default: pieces of the same network.' },
+    ],
+    make: () => ({ isNetworkEnd: { at: 'at' } }),
+  },
+  sameRegion: {
+    key: 'sameRegion', label: 'On the same island', category: 'Board', shape: 'tuple',
+    description: 'True when two locations touch the same island (a group of connected land hexes).',
+    params: [
+      { name: 'a', label: 'Location', kind: 'locationVar', default: 'at' },
+      { name: 'b', label: 'Same island as', kind: 'locationVar', default: 'lastPlaced' },
+    ],
+    make: () => ({ sameRegion: ['at', 'lastPlaced'] }),
   },
 };
 
@@ -850,6 +952,33 @@ export const EXPRS: ExprCatalog = {
     params: [{ name: 'player', label: 'Player', kind: 'playerRef', default: 'self' }],
     make: () => ({ longestRoad: 'self' }),
   },
+  pieceState: {
+    key: 'pieceState', label: 'Piece state', category: 'Board', shape: 'object',
+    description: 'A number stored on one piece (e.g. a knight’s strength). 0 if not set.',
+    params: [
+      { name: 'piece', label: 'Piece', kind: 'locationVar', varType: 'piece', default: 'piece' },
+      { name: 'key', label: 'State', kind: 'key', keySpace: 'pieceState', default: 'strength' },
+    ],
+    make: () => ({ pieceState: { piece: 'piece', key: 'strength' } }),
+  },
+  sumPieceState: {
+    key: 'sumPieceState', label: 'Total piece state', category: 'Board', shape: 'object',
+    description: 'Adds up a number stored on every matching piece (e.g. the strength of all active knights).',
+    params: [
+      { name: 'query', label: 'Pieces', kind: 'pieceQuery', default: { owner: 'self' } },
+      { name: 'key', label: 'State', kind: 'key', keySpace: 'pieceState', default: 'strength' },
+    ],
+    make: () => ({ sumPieceState: { query: { owner: 'self' }, key: 'strength' } }),
+  },
+  cargoCount: {
+    key: 'cargoCount', label: 'Cargo carried', category: 'Board', shape: 'object',
+    description: 'How much a piece carries: of one resource/goods, or everything.',
+    params: [
+      { name: 'piece', label: 'Piece', kind: 'locationVar', varType: 'piece', default: 'pieceId' },
+      { name: 'key', label: 'Goods', kind: 'key', keySpace: 'cargo', optional: true },
+    ],
+    make: () => ({ cargoCount: { piece: 'pieceId' } }),
+  },
 };
 
 /* ------------------------------------------------------------------------ */
@@ -864,6 +993,7 @@ const pieceVars: EventVar[] = [
   { name: 'piece', type: 'piece', description: 'The piece type id' },
   { name: 'at', type: 'location', description: 'Where it happened' },
   { name: 'owner', type: 'player', description: 'The piece’s owner' },
+  { name: 'pieceId', type: 'piece', description: 'That exact piece' },
 ];
 
 /**
@@ -889,7 +1019,26 @@ export const EVENTS: Record<BuiltinEvent, EventSpec> = {
   piecePlaced: { label: 'Piece placed', description: 'Whenever a piece is put on the board.', vars: pieceVars },
   pieceUpgraded: { label: 'Piece upgraded', description: 'Whenever a piece is upgraded.', vars: pieceVars },
   pieceRemoved: { label: 'Piece removed', description: 'Whenever a piece leaves the board.', vars: pieceVars },
-  pieceMoved: { label: 'Piece moved', description: 'Whenever a piece moves.', vars: pieceVars },
+  pieceMoved: {
+    label: 'Piece moved', description: 'Whenever a piece moves.',
+    vars: [
+      ...pieceVars,
+      { name: 'from', type: 'location', description: 'Where it came from' },
+      { name: 'steps', type: 'number', description: 'Steps used (when moved with a range)' },
+    ],
+  },
+  pieceDowngraded: {
+    label: 'Piece downgraded', description: 'When a piece is reduced to a lesser one (city → settlement).',
+    vars: [...pieceVars, { name: 'from', type: 'piece', description: 'The type it was before' }],
+  },
+  playerProduction: {
+    label: 'Player production', description: 'After each production, once per player: how many resources they received (0 = nothing).',
+    vars: [
+      playerVar,
+      { name: 'amount', type: 'number', description: 'Resources received' },
+      { name: 'roll', type: 'number', description: 'The number produced' },
+    ],
+  },
   tokenMoved: {
     label: 'Token moved', description: 'Whenever a token (robber…) moves.',
     vars: [{ name: 'token', type: 'any', description: 'Token id' }, { name: 'at', type: 'location', description: 'New location' }],

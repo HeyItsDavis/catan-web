@@ -7,7 +7,7 @@
  * Gold-style terrains (producesChoice) are returned as owed choices for the interpreter.
  */
 import type { Id } from './schema';
-import { type Ctx, emit, log, piecesAt, playerName } from './context';
+import { type Ctx, emit, log, piecesAt, playerName, playersFrom } from './context';
 import { evalResourceMap } from './exprs';
 import { bankHas, moveResource } from './resources';
 import { hexCorners, parseHexId } from './board/topology';
@@ -65,6 +65,7 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
     t.total += n; t.claimants += 1;
     totals.set(r, t);
   }
+  const received = new Map<string, number>();
   for (const [pid, m] of claims) {
     const got: string[] = [];
     for (const [r, n] of m) {
@@ -72,12 +73,19 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
       if (bankHas(ctx, r) < t.total && t.claimants > 1) continue;
       const moved = moveResource(ctx, 'bank', pid, r, n);
       if (moved > 0) got.push(`${moved} ${ctx.L.resources.get(r)?.name ?? r}`);
+      received.set(pid, (received.get(pid) ?? 0) + moved);
     }
     if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid);
   }
   for (const [r, t] of totals) {
     if (bankHas(ctx, r) < t.total && t.claimants > 1) log(ctx, `The bank is short of ${ctx.L.resources.get(r)?.name ?? r}; nobody receives it`);
   }
+  const owed = [...gold.values()].filter((g) => g.amount > 0);
+  for (const g of owed) received.set(g.player, (received.get(g.player) ?? 0) + g.amount);
   emit(ctx, 'production', { roll: opts.roll ?? null, hex: opts.hex ?? null });
-  return [...gold.values()].filter((g) => g.amount > 0);
+  for (const pid of playersFrom(ctx)) {
+    if (opts.player && pid !== opts.player) continue;
+    emit(ctx, 'playerProduction', { player: pid, amount: received.get(pid) ?? 0, roll: opts.roll ?? null, hex: opts.hex ?? null }, pid);
+  }
+  return owed;
 }

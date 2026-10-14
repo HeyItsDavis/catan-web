@@ -96,6 +96,7 @@ class Checker {
     if (qq.onTerrain) this.refs('terrains', qq.onTerrain, [...path, 'onTerrain'], false);
     if (qq.owner !== undefined && qq.owner !== 'any' && qq.owner !== 'others') this.playerRef(qq.owner, [...path, 'owner'], scope);
     if (qq.near) this.varRef(qq.near, [...path, 'near'], scope);
+    if (qq.region) this.varRef(qq.region, [...path, 'region'], scope);
   }
 
   visitor(): WalkVisitor {

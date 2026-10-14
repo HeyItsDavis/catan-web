@@ -6,7 +6,7 @@
 import type { Expr, ResourceMap, Id } from './schema';
 import { type Ctx, type Env, findPlayer, settingValue } from './context';
 import { evalCond } from './conditions';
-import { resolvePlayer, resolveResource, queryPieces } from './refs';
+import { pieceOf, resolvePlayer, resolveResource, queryPieces } from './refs';
 import { randInt } from './rng';
 import { rng } from './context';
 import { computeVPInternal } from './vp';
@@ -80,6 +80,19 @@ function evalRaw(ctx: Ctx, env: Env, e: Expr): number {
   if ('longestRoad' in e) {
     const pid = resolvePlayer(ctx, env, e.longestRoad);
     return pid && findPlayer(ctx, pid) ? longestRoadFor(ctx, pid) : 0;
+  }
+  if ('pieceState' in e) {
+    const pc = pieceOf(ctx, env, e.pieceState.piece);
+    return pc?.state[e.pieceState.key] ?? 0;
+  }
+  if ('sumPieceState' in e) {
+    return queryPieces(ctx, env, e.sumPieceState.query).reduce((a, p) => a + (p.state[e.sumPieceState.key] ?? 0), 0);
+  }
+  if ('cargoCount' in e) {
+    const pc = pieceOf(ctx, env, e.cargoCount.piece);
+    if (!pc?.cargo) return 0;
+    if (e.cargoCount.key !== undefined) return pc.cargo[e.cargoCount.key] ?? 0;
+    return Object.values(pc.cargo).reduce((a, b) => a + b, 0);
   }
   return 0;
 }
