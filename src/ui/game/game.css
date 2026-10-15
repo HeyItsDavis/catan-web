@@ -809,7 +809,9 @@ button.g-card { cursor: pointer; }
   .g-phone-top { display: block; order: -1; background: var(--g-bg); }
   .g-center { height: clamp(300px, 100vw, 56dvh); flex: none; }
   .g-overlay-dice { right: 8px; bottom: 8px; }
-  .g-overlay-dice .g-die { width: 36px; height: 36px; }
+  .g-overlay-dice .g-die { width: 34px; height: 34px; }
+  .g-overlay-dice .g-dice { gap: 4px; }
+  .g-overlay-dice .g-eventdie { min-width: 34px; height: 34px; }
   .g-overlay-offers { max-width: calc(100% - 110px); }
   .g-overlay-bottom { right: 100px; }
   .g-overlay-trade { width: calc(100% - 8px); bottom: 4px; }

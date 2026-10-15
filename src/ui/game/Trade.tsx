@@ -263,7 +263,7 @@ export function TradeOffers({ def, state, playerId, send }: { def: GameDefinitio
                             Trade
                           </button>
                         ) : (
-                          <span className="g-small">{r === 'reject' ? ' ✗ declined' : ' …'}</span>
+                          <span className="g-small g-muted">{r === 'reject' ? '✗ declined' : 'thinking…'}</span>
                         )}
                       </span>
                     );
