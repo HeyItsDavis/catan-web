@@ -128,7 +128,7 @@ test('two players: lobby, setup, roll, build, trade, dev card, robber, reconnect
   });
 
   await test.step('build a road on a highlighted edge', async () => {
-    await first.page.locator('.g-abtn[title^="Road"]').click();
+    await first.page.locator('.g-abtn[aria-label^="Road"]').click();
     await clickHighlight(first, 'edge', 0);
     await expect.poll(async () => (await hostGame(host)).pieces.filter((p) => p.type === 'road' && p.owner === id[first.name]).length).toBe(3);
     await expect(second.page.locator('.g-piece')).toHaveCount(9);
@@ -136,11 +136,16 @@ test('two players: lobby, setup, roll, build, trade, dev card, robber, reconnect
 
   await test.step('bank trade 4:1 (or port rate)', async () => {
     const before = await res(first);
-    await first.page.getByRole('button', { name: /^Trade/ }).first().click();
+    // Click a hand card: the trade panel opens with it on the "give" side; add cards until the
+    // bank button lights up (4:1, or a harbor rate).
+    const hand = first.page.getByTestId('hand');
+    await hand.locator('[data-hand-res="lumber"]').click();
     const dlg = first.page.getByRole('dialog', { name: 'Trade' });
-    await dlg.locator('button[title^="Lumber:"]').click();
-    await dlg.locator('button[title="Ore"]').click();
-    await dlg.getByRole('button', { name: 'Trade with bank' }).click();
+    await expect(dlg.getByTestId('trade-give')).toContainText('1');
+    await dlg.locator('[data-get-res="ore"]').click();
+    const bank = dlg.getByRole('button', { name: 'Trade with bank' });
+    for (let k = 0; k < 4 && !(await bank.isEnabled()); k++) await hand.locator('[data-hand-res="lumber"]').click();
+    await bank.click();
     await expect.poll(async () => (await res(first)).ore).toBe(before.ore + 1);
     expect((await res(first)).lumber).toBeLessThan(before.lumber);
   });
@@ -149,9 +154,8 @@ test('two players: lobby, setup, roll, build, trade, dev card, robber, reconnect
     const a0 = await res(first), b0 = await res(second);
     await first.page.getByRole('button', { name: /^Trade/ }).first().click();
     const dlg = first.page.getByRole('dialog', { name: 'Trade' });
-    await dlg.getByRole('tab', { name: 'Players' }).click();
-    await dlg.getByRole('button', { name: 'more Brick' }).first().click();
-    await dlg.getByRole('button', { name: 'more Ore' }).last().click();
+    await first.page.getByTestId('hand').locator('[data-hand-res="brick"]').click();
+    await dlg.getByRole('button', { name: 'want Ore' }).click();
     await dlg.getByRole('button', { name: 'Send offer' }).click();
     const offers = second.page.locator('.g-offers');
     await expect(offers).toBeVisible();
@@ -165,12 +169,12 @@ test('two players: lobby, setup, roll, build, trade, dev card, robber, reconnect
 
   await test.step('buy a development card (Year of Plenty stacked on top)', async () => {
     await hook(host, 'stackDeck', 'dev', ['yearOfPlenty']);
-    await first.page.locator('.g-abtn[title^="Buy Development"]').click();
-    await expect(first.page.locator('.g-self .g-card', { hasText: 'Year of Plenty' })).toBeVisible();
+    await first.page.locator('.g-abtn[aria-label^="Buy Development"]').click();
+    await expect(first.page.locator('[data-testid="hand"] .g-card', { hasText: 'Year of Plenty' })).toBeVisible();
     // Not playable on the turn it was bought.
     await expect(first.page.locator('.g-card--playable')).toHaveCount(0);
     // The opponent sees one hidden card.
-    await expect(second.page.locator('.g-opp-counts [title="Cards in hand"]')).toContainText('1');
+    await expect(second.page.locator('.g-opp .g-opp-counts [title="Cards in hand"]')).toContainText('1');
     await first.page.getByRole('button', { name: 'End turn' }).click();
     await expect(second.page.locator('.g-turn--mine')).toBeVisible();
   });

@@ -68,7 +68,7 @@ export function bankTrade(ctx: Ctx, pid: string, giveIn: Record<Id, number>, get
   for (const [r, n] of Object.entries(get)) if (bankHas(ctx, r) < n) throw new CommandError(`The bank has no ${r} left`);
   for (const [r, n] of Object.entries(give)) moveResource(ctx, pid, 'bank', r, n);
   for (const [r, n] of Object.entries(get)) moveResource(ctx, 'bank', pid, r, n);
-  log(ctx, `${playerName(ctx, pid)} trades with the bank`, pid);
+  log(ctx, `${playerName(ctx, pid)} trades with the bank`, pid, { kind: 'bankTrade' });
   emit(ctx, 'tradeCompleted', { player: pid, with: 'bank' }, pid);
 }
 
@@ -119,7 +119,7 @@ export function confirmTrade(ctx: Ctx, pid: string, tradeId: string, withPlayer:
   for (const [r, n] of Object.entries(t.give)) moveResource(ctx, pid, withPlayer, r, n);
   for (const [r, n] of Object.entries(t.get)) moveResource(ctx, withPlayer, pid, r, n);
   ctx.s.trades = ctx.s.trades.filter((x) => x.id !== tradeId);
-  log(ctx, `${playerName(ctx, pid)} trades with ${playerName(ctx, withPlayer)}`, pid);
+  log(ctx, `${playerName(ctx, pid)} trades with ${playerName(ctx, withPlayer)}`, pid, { kind: 'trade' });
   emit(ctx, 'tradeCompleted', { player: pid, with: withPlayer }, pid);
 }
 

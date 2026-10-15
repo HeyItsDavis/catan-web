@@ -60,7 +60,22 @@ export function createGame(
   emit(ctx, 'gameStart', {});
   flushEvents(ctx, th);
   settle(ctx);
+  flushFlows(ctx);
   return ctx.s;
+}
+
+/** Resource movements no log line described yet (e.g. a mod's `pay` effect) get a line of their own. */
+function flushFlows(ctx: Ctx): void {
+  const flows = ctx.flows;
+  if (!flows?.length) return;
+  const who = (id: string) => (id === 'bank' ? 'the bank' : playerName(ctx, id));
+  const parts = flows.map((f) => {
+    const n = Object.values(f.res).reduce((a, b) => a + b, 0);
+    const what = f.hidden ? `${n} card(s)` : Object.entries(f.res).map(([r, k]) => `${k} ${ctx.L.resources.get(r)?.name ?? r}`).join(', ');
+    return f.to === 'bank' ? `${who(f.from)} pays ${what}` : `${who(f.to)} receives ${what}${f.from === 'bank' ? '' : ` from ${who(f.from)}`}`;
+  });
+  const main = flows[0].to === 'bank' ? flows[0].from : flows[0].to;
+  log(ctx, parts.join('; '), main === 'bank' ? undefined : main, { kind: 'flow' });
 }
 
 /** Run to quiescence, keep awards up to date, check for a winner. */
@@ -95,6 +110,7 @@ export function applyCommand(
     run(ctx);
     if (ctx.aborted && cmd.type !== 'respond') return { ok: false, error: ctx.aborted };
     settle(ctx);
+    flushFlows(ctx);
     ctx.s.version = state.version + 1;
     return { ok: true, state: ctx.s };
   } catch (e) {
@@ -130,7 +146,7 @@ function dispatch(ctx: Ctx, pid: string, cmd: Command): void {
       const d = ctx.L.decks.get(cmd.deck)!;
       const th = newThread(ctx, pid, [{ op: 'drawCard', deck: d.id, player: 'self' }], { txn: true });
       pay(ctx, pid, evalResourceMap(ctx, { self: pid, vars: {} }, d.cost));
-      log(ctx, `${playerName(ctx, pid)} buys a ${d.name} card`, pid);
+      log(ctx, `${playerName(ctx, pid)} buys a ${d.name} card`, pid, { kind: 'buyCard' });
       flushEvents(ctx, th);
       return;
     }
@@ -144,7 +160,7 @@ function dispatch(ctx: Ctx, pid: string, cmd: Command): void {
       newThread(ctx, pid, [...cdef.effect, { op: '$afterCardPlay', instance: inst }], { txn: true, vars: { card: inst.card } });
       p.hand = p.hand.filter((c) => c.id !== inst.id);
       if (cdef.play.limitGroup) p.cardPlaysThisTurn[cdef.play.limitGroup] = (p.cardPlaysThisTurn[cdef.play.limitGroup] ?? 0) + 1;
-      log(ctx, `${p.name} plays ${cdef.name}`, pid);
+      log(ctx, `${p.name} plays ${cdef.name}`, pid, { kind: 'playCard', card: cdef.id });
       return;
     }
     case 'doAction': {
@@ -162,7 +178,7 @@ function dispatch(ctx: Ctx, pid: string, cmd: Command): void {
       const p = getPlayer(ctx, pid);
       if (a.cost) pay(ctx, pid, evalResourceMap(ctx, { self: pid, vars }, a.cost));
       p.actionUses[a.id] = (p.actionUses[a.id] ?? 0) + 1;
-      log(ctx, `${p.name}: ${a.name}`, pid);
+      log(ctx, `${p.name}: ${a.name}`, pid, { kind: 'action' });
       flushEvents(ctx, th);
       return;
     }

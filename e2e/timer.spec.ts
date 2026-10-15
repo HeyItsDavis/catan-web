@@ -25,7 +25,6 @@ test('an idle player is moved on when the timer runs out', async ({ browser }) =
   const g1 = await hostGame(host);
   expect(g1.prompts[0].player).not.toBe(first);
   // The chat explains what happened.
-  await guest.page.getByRole('tab', { name: 'Chat' }).click();
   await expect(guest.page.locator('.g-logchat')).toContainText("Time's up");
   expect(host.errors).toEqual([]);
 });

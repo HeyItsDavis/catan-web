@@ -39,6 +39,21 @@ describe('GameScreen (fixture)', () => {
     expect(render(s)).toContain(s.prompts[0].label.replace(/&/g, '&amp;').replace(/'/g, '&#x27;'));
   });
 
+  it('colonist layout: hand as cards, square action buttons, bank row, player panels, credits', () => {
+    const html = render({ ...makeFixtureState(), prompts: [] }).replace(/<!-- -->/g, '');
+    expect(html).toContain('data-testid="hand"');
+    expect(html).toContain('data-anchor="bank"');
+    expect(html).toContain('data-bank-res="wood"');
+    expect(html).toMatch(/class="g-abtn[^"]*"[^>]*aria-label="Road"/);
+    expect(html).toMatch(/aria-label="End turn"/);
+    expect(html).toContain('data-player-panel="p2"');
+    expect(html).toContain('title="Resource cards"');
+    expect(html).toContain('title="Cards in hand"');
+    expect(html).toContain('game-icons.net (CC BY 3.0)');
+    // The opponent's hidden resource count is shown as a card back with a number.
+    expect(html).toMatch(/data-player-panel="p2"[\s\S]*?title="Resource cards"><span class="g-rcard g-rcard--back/);
+  });
+
   it('renders game over', () => {
     const s = makeFixtureState();
     s.winner = 'p2';

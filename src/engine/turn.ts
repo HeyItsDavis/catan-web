@@ -83,14 +83,14 @@ export function startingResources(ctx: Ctx, th: Thread, pid: string): void {
     const terr = ctx.L.terrains.get(hex.terrain);
     if (!terr || !hex.revealed) continue;
     for (const [r, n] of Object.entries(evalResourceMap(ctx, { self: pid, vars: { at: h } }, terr.produces))) {
-      const m = moveResource(ctx, 'bank', pid, r, n);
+      const m = moveResource(ctx, 'bank', pid, r, n, { at: h });
       if (m) got.push(`${m} ${ctx.L.resources.get(r)?.name ?? r}`);
     }
     if (terr.producesChoice) {
       pushScoped(ctx, th, pid, [{ op: 'chooseAndGain', amount: terr.producesChoice.amount, options: terr.producesChoice.options }]);
     }
   }
-  if (got.length) log(ctx, `${playerName(ctx, pid)} receives starting resources: ${got.join(', ')}`, pid);
+  if (got.length) log(ctx, `${playerName(ctx, pid)} receives starting resources: ${got.join(', ')}`, pid, { kind: 'production' });
 }
 
 export function turnStart(ctx: Ctx): void {
@@ -174,7 +174,7 @@ export function doRoll(ctx: Ctx, fixed?: number[]): void {
   s.hasRolled = true;
   if (s.phase === 'preRoll') s.phase = 'main';
   const pid = currentPlayerId(s);
-  log(ctx, `${playerName(ctx, pid)} rolls ${total}${events.length ? ` (${events.join(', ')})` : ''}`, pid);
+  log(ctx, `${playerName(ctx, pid)} rolls ${total}${events.length ? ` (${events.join(', ')})` : ''}`, pid, { kind: 'roll', dice: values });
   const payload: Record<string, number | string> = { total, player: pid };
   values.forEach((v, i) => { payload[`die${i}`] = v; });
   (ctx.def.dice.eventDice ?? []).forEach((ed, i) => {

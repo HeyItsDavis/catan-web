@@ -832,10 +832,41 @@ export interface TradeOffer {
   responses: Record<string, 'accept' | 'reject' | 'pending'>;
 }
 
+/**
+ * (additive) One movement of resource cards described by a log entry, so the UI can show and
+ * animate who got what from where. `from` / `to` are a player id or 'bank'.
+ * Redaction: for `hidden` flows (random steals) only the two players involved see the resource
+ * types; everybody else gets `res = { '?': <count> }`.
+ */
+export interface ResourceFlow {
+  from: string;
+  to: string;
+  /** Resource id -> amount moved (or `{ '?': n }` when redacted). */
+  res: Record<Id, number>;
+  /** Board location the cards came from (production / starting resources: the producing hex). */
+  at?: LocationId;
+  /** Which cards moved is secret (random steal / random transfer). */
+  hidden?: boolean;
+}
+
 export interface LogEntry {
   turn: number;
   player?: string;
   text: string;
+  /** (additive) What happened, for UIs that render structured lines. Builtin kinds: 'roll',
+   *  'production' (dice / starting resources), 'gain', 'transfer', 'steal', 'discard', 'build',
+   *  'bankTrade', 'trade', 'buyCard', 'playCard', 'action', 'flow' (resources moved by other
+   *  effects). Absent = plain text. */
+  kind?: string;
+  /** (additive) Resource movements that this line describes (see ResourceFlow). */
+  flows?: ResourceFlow[];
+  /** (additive) 'roll': the numeric dice values. */
+  dice?: number[];
+  /** (additive) 'build': piece type placed and where. */
+  piece?: Id;
+  at?: LocationId;
+  /** (additive) 'playCard': card def id played. */
+  card?: Id;
 }
 
 export interface GameState {

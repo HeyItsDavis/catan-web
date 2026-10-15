@@ -57,12 +57,12 @@ test('dev cards, city, chat and the end of the game', async ({ browser }) => {
     await hook(host, 'stackDeck', 'dev', ['knight', 'roadBuilding', 'monopoly']);
     for (let k = 0; k < 3; k++) {
       const g = await hostGame(host);
-      await A.page.locator('.g-abtn[title^="Buy Development"]').click();
+      await A.page.locator('.g-abtn[aria-label^="Buy Development"]').click();
       await changed(g);
     }
-    await expect(A.page.locator('.g-self .g-card')).toHaveCount(3);
+    await expect(A.page.locator('[data-testid="hand"] .g-card')).toHaveCount(3);
     const g = await hostGame(host);
-    await A.page.locator('.g-abtn[title^="City"]').click();
+    await A.page.locator('.g-abtn[aria-label^="City"]').click();
     await clickHighlight(A, 'vertex', 0);
     await changed(g);
     expect((await hostGame(host)).pieces.filter((p) => p.type === 'city' && p.owner === aId)).toHaveLength(1);
@@ -71,12 +71,9 @@ test('dev cards, city, chat and the end of the game', async ({ browser }) => {
   });
 
   await test.step('in-game chat', async () => {
-    await B.page.getByRole('tab', { name: 'Chat' }).click();
     await B.page.locator('.g-logchat input').fill('nice city');
     await B.page.locator('.g-logchat input').press('Enter');
-    await A.page.getByRole('tab', { name: 'Chat' }).click();
     await expect(A.page.locator('.g-logchat')).toContainText('nice city');
-    await A.page.getByRole('tab', { name: 'Log' }).click();
   });
 
   await pass(B);
@@ -97,7 +94,7 @@ test('dev cards, city, chat and the end of the game', async ({ browser }) => {
       await expect.poll(async () => Object.values((await me(bId)).resources).reduce((a, b) => a + b, 0)).toBe(before - 1);
     }
     expect((await me(aId)).played.map((c) => c.card)).toContain('knight');
-    await expect(B.page.locator('.g-opp')).toContainText('Knights played: 1');
+    await expect(B.page.locator('.g-opp [data-stat="knightsPlayed"]')).toHaveAttribute('title', 'Knights played: 1');
     // One dev card per turn.
     await expect(A.page.locator('.g-card--playable')).toHaveCount(0);
     await pass(A);
@@ -138,7 +135,7 @@ test('dev cards, city, chat and the end of the game', async ({ browser }) => {
     const g = await hostGame(host);
     await hook(host, 'giveResources', aId, { brick: 1, lumber: 1 });
     // The win is checked after every command, so the next action ends the game.
-    await A.page.locator('.g-abtn[title^="Road"]').click();
+    await A.page.locator('.g-abtn[aria-label^="Road"]').click();
     await changed(g);
     const end = await hostGame(host);
     expect(end.phase).toBe('gameOver');
