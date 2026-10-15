@@ -3,8 +3,8 @@
  * (already cloned) state, lookups, events queued by the current op, caches.
  */
 import type {
-  ActionDef, AwardDef, CardDef, DeckDef, GameDefinition, GameState, Id, LocationId, PieceDef, PieceInstance,
-  PlayerState, PortDef, ResourceDef, SettingDef, TerrainDef, TokenDef,
+  ActionDef, AwardDef, CardDef, DeckDef, GameDefinition, GameState, Id, LocationId, LogEntry, PieceDef, PieceInstance,
+  PlayerState, PortDef, ResourceDef, ResourceFlow, SettingDef, TerrainDef, TokenDef,
 } from './schema';
 import type { RngHolder } from './rng';
 
@@ -69,6 +69,8 @@ export interface Ctx {
   tmpRng?: RngHolder;
   /** Wall-clock ms supplied by the host (for turnStartedAt). */
   now?: number;
+  /** Resource movements not yet attached to a log entry (see resources.recordFlow / log). */
+  flows?: ResourceFlow[];
 }
 
 export class CommandError extends Error {}
@@ -187,9 +189,18 @@ export function emit(ctx: Ctx, name: string, payload: Record<string, Val> = {}, 
   ctx.events.push({ name, payload, player });
 }
 
-export function log(ctx: Ctx, text: string, player?: string): void {
+/** Extra structured data for a log line (see LogEntry). */
+export type LogExtra = Pick<LogEntry, 'kind' | 'dice' | 'piece' | 'at' | 'card'>;
+
+/** Append a log line. Resource flows recorded since the previous line are attached to it. */
+export function log(ctx: Ctx, text: string, player?: string, extra?: LogExtra): void {
   if (ctx.readonly) return;
-  ctx.s.log.push({ turn: ctx.s.turn, player, text });
+  const e: LogEntry = { turn: ctx.s.turn, text };
+  if (player !== undefined) e.player = player;
+  if (extra) for (const [k, v] of Object.entries(extra)) if (v !== undefined) (e as unknown as Record<string, unknown>)[k] = v;
+  if (ctx.flows?.length) e.flows = ctx.flows;
+  ctx.flows = undefined;
+  ctx.s.log.push(e);
   if (ctx.s.log.length > 500) ctx.s.log.splice(0, ctx.s.log.length - 500);
 }
 

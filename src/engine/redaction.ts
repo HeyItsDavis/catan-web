@@ -13,6 +13,8 @@
  *  - Prompts addressed to other players keep kind/label/amount but have `options: []`.
  *  - With lobby `hideBankCards`, `bank` becomes `{}`.
  *  - Unrevealed (fog) hexes show terrain 'hidden' and number null.
+ *  - Log entries' `hidden` resource flows (random steals) show `res: { '?': n }` unless the
+ *    viewer is the giver or the receiver.
  */
 import type { GameDefinition, GameState } from './schema';
 
@@ -33,6 +35,12 @@ export function redactState(def: GameDefinition, state: GameState, viewer: strin
   s.prompts = s.prompts.map((pr) => (pr.player === viewer ? pr : { ...pr, options: [], optionLabels: undefined }))
     .map((pr) => { if (pr.optionLabels === undefined) delete pr.optionLabels; return pr; });
   if (s.settings.hideBankCards) s.bank = {};
+  for (const e of s.log) {
+    for (const f of e.flows ?? []) {
+      if (!f.hidden || f.from === viewer || f.to === viewer) continue;
+      f.res = { '?': Object.values(f.res).reduce((a, b) => a + b, 0) };
+    }
+  }
   for (const h of Object.values(s.hexes)) {
     if (!h.revealed) { h.terrain = 'hidden'; h.number = null; }
   }

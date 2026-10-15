@@ -163,6 +163,7 @@ export function abort(ctx: Ctx, th: Thread, message: string): void {
     const snap = root.snapshot;
     const counter = ctx.s.idCounter;
     ctx.s = snap;
+    ctx.flows = undefined; // the snapshot undoes those movements
     ctx.s.idCounter = Math.max(counter ?? 1, snap.idCounter ?? 1);
     invalidatePieces(ctx);
     ctx.regions = undefined;
@@ -452,7 +453,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
         const m = moveResource(ctx, 'bank', pid, r, n);
         if (m) got.push(`${m} ${resName(ctx, r)}`);
       }
-      if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid);
+      if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid, { kind: 'gain' });
       return;
     }
     case 'pay': {
@@ -472,9 +473,9 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
         for (let i = 0; i < amount; i++) {
           const r = from === 'bank' ? randomBankResource(ctx) : randomResource(ctx, from);
           if (!r) break;
-          moved += moveResource(ctx, from, to, r, 1);
+          moved += moveResource(ctx, from, to, r, 1, { hidden: from !== 'bank' && to !== 'bank' });
         }
-        if (moved) log(ctx, `${playerName(ctx, to)} takes ${moved} card(s) from ${from === 'bank' ? 'the bank' : playerName(ctx, from)}`, to);
+        if (moved) log(ctx, `${playerName(ctx, to)} takes ${moved} card(s) from ${from === 'bank' ? 'the bank' : playerName(ctx, from)}`, to, { kind: 'steal' });
         return;
       }
       if (eff.resource === 'choice') {
@@ -490,7 +491,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       const r = resolveResource(env, eff.resource);
       if (!r) return;
       const m = moveResource(ctx, from, to, r, amount);
-      if (m) log(ctx, `${from === 'bank' ? 'The bank' : playerName(ctx, from)} gives ${m} ${resName(ctx, r)} to ${to === 'bank' ? 'the bank' : playerName(ctx, to)}`);
+      if (m) log(ctx, `${from === 'bank' ? 'The bank' : playerName(ctx, from)} gives ${m} ${resName(ctx, r)} to ${to === 'bank' ? 'the bank' : playerName(ctx, to)}`, to === 'bank' ? from : to, { kind: 'transfer' });
       return;
     }
     case 'steal': {
@@ -502,9 +503,9 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       for (let i = 0; i < amount; i++) {
         const r = randomResource(ctx, from);
         if (!r) break;
-        moved += moveResource(ctx, from, to, r, 1);
+        moved += moveResource(ctx, from, to, r, 1, { hidden: true });
       }
-      log(ctx, moved ? `${playerName(ctx, to)} stole ${moved} card(s) from ${playerName(ctx, from)}` : `${playerName(ctx, from)} had nothing to steal`, to);
+      log(ctx, moved ? `${playerName(ctx, to)} stole ${moved} card(s) from ${playerName(ctx, from)}` : `${playerName(ctx, from)} had nothing to steal`, to, { kind: 'steal' });
       return;
     }
     case 'discard': {
@@ -517,7 +518,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       const total = eligible.reduce((a, r) => a + p.resources[r], 0);
       if (total <= amount) {
         for (const r of eligible) moveResource(ctx, p.id, 'bank', r, p.resources[r]);
-        if (total) log(ctx, `${p.name} discards ${total} card(s)`, p.id);
+        if (total) log(ctx, `${p.name} discards ${total} card(s)`, p.id, { kind: 'discard' });
         return;
       }
       raise(ctx, th, { player: p.id, kind: 'discard', label: `Discard ${amount} card(s)`, options: eligible, amount },
@@ -579,7 +580,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       const inst = addPiece(ctx, pdef.id, pid, at, old?.cargo);
       bind(eff.as, at);
       bind(eff.asId, inst.id);
-      log(ctx, `${playerName(ctx, pid)} ${old ? 'upgrades to' : 'places'} a ${pdef.name}`, pid);
+      log(ctx, `${playerName(ctx, pid)} ${old ? 'upgrades to' : 'places'} a ${pdef.name}`, pid, { kind: 'build', piece: pdef.id, at });
       emit(ctx, 'piecePlaced', { piece: pdef.id, at, owner: pid, player: pid, pieceId: inst.id }, pid);
       if (old) emit(ctx, 'pieceUpgraded', { from: old.type, piece: pdef.id, at, owner: pid, player: pid, pieceId: inst.id }, pid);
       return;
@@ -609,7 +610,7 @@ function exec(ctx: Ctx, th: Thread, sc: string, eff: IEffect): void {
       const inst = addPiece(ctx, to.id, pid, at, old.cargo);
       bind(eff.as, at);
       bind(eff.asId, inst.id);
-      log(ctx, `${playerName(ctx, pid)} upgrades to a ${to.name}`, pid);
+      log(ctx, `${playerName(ctx, pid)} upgrades to a ${to.name}`, pid, { kind: 'build', piece: to.id, at });
       emit(ctx, 'pieceUpgraded', { from: old.type, piece: to.id, at, owner: pid, player: pid, pieceId: inst.id }, pid);
       return;
     }
@@ -1198,7 +1199,7 @@ export function respond(ctx: Ctx, pid: string, promptId: string, answer: unknown
     }
     if (sum !== pr.amount) throw new CommandError(`Must discard exactly ${pr.amount}`);
     for (const [r, n] of Object.entries(answer as Record<string, number>)) if (n > 0) moveResource(ctx, p.id, 'bank', r, n);
-    log(ctx, `${p.name} discards ${sum} card(s)`, p.id);
+    log(ctx, `${p.name} discards ${sum} card(s)`, p.id, { kind: 'discard' });
   } else {
     let val: string | null;
     if (answer === null || answer === undefined) {

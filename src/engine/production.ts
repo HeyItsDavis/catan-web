@@ -9,7 +9,7 @@
 import type { Id } from './schema';
 import { type Ctx, emit, log, piecesAt, playerName, playersFrom } from './context';
 import { evalResourceMap } from './exprs';
-import { bankHas, moveResource } from './resources';
+import { bankHas, moveResource, recordFlow } from './resources';
 import { hexCorners, hexEdges, parseHexId } from './board/topology';
 
 export interface GoldOwed { player: string; amount: number; options?: Id[] }
@@ -26,12 +26,19 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
     ? [opts.hex].filter((h) => ctx.s.hexes[h])
     : Object.values(ctx.s.hexes).filter((h) => h.number !== null && h.number === opts.roll).map((h) => h.id);
   const claims = new Map<string, Map<Id, number>>();
+  /** player -> resource -> producing hex -> amount (for LogEntry.flows). */
+  const sources = new Map<string, Map<Id, Map<string, number>>>();
   const gold = new Map<string, GoldOwed>();
-  const addClaim = (pid: string, r: Id, n: number) => {
+  const addClaim = (pid: string, r: Id, n: number, hex: string) => {
     if (n <= 0) return;
     let m = claims.get(pid);
     if (!m) claims.set(pid, (m = new Map()));
     m.set(r, (m.get(r) ?? 0) + n);
+    let sm = sources.get(pid);
+    if (!sm) sources.set(pid, (sm = new Map()));
+    let hm = sm.get(r);
+    if (!hm) sm.set(r, (hm = new Map()));
+    hm.set(hex, (hm.get(hex) ?? 0) + n);
   };
   for (const hid of hexes) {
     const hex = ctx.s.hexes[hid];
@@ -47,10 +54,10 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
         const mult = pdef?.productionMultiplier ?? 0;
         if (mult <= 0) continue;
         const env = { self: pc.owner, vars: { at: hid } };
-        for (const [r, n] of Object.entries(evalResourceMap(ctx, env, terr.produces))) addClaim(pc.owner, r, n * mult);
+        for (const [r, n] of Object.entries(evalResourceMap(ctx, env, terr.produces))) addClaim(pc.owner, r, n * mult, hid);
         for (const b of pdef?.productionBonus ?? []) {
           if (b.terrain !== hex.terrain) continue;
-          for (const [r, n] of Object.entries(evalResourceMap(ctx, env, b.gives))) addClaim(pc.owner, r, n);
+          for (const [r, n] of Object.entries(evalResourceMap(ctx, env, b.gives))) addClaim(pc.owner, r, n, hid);
         }
         if (terr.producesChoice) {
           const g = gold.get(pc.owner) ?? { player: pc.owner, amount: 0, options: terr.producesChoice.options };
@@ -73,11 +80,18 @@ export function runProduction(ctx: Ctx, opts: { roll?: number; hex?: string; pla
     for (const [r, n] of m) {
       const t = totals.get(r)!;
       if (bankHas(ctx, r) < t.total && t.claimants > 1) continue;
-      const moved = moveResource(ctx, 'bank', pid, r, n);
+      const moved = moveResource(ctx, 'bank', pid, r, n, { record: false });
+      // Attribute the cards to the hexes that produced them (in claim order).
+      let left = moved;
+      for (const [hex, k] of sources.get(pid)?.get(r) ?? []) {
+        const m = Math.min(k, left);
+        recordFlow(ctx, 'bank', pid, r, m, { at: hex });
+        left -= m;
+      }
       if (moved > 0) got.push(`${moved} ${ctx.L.resources.get(r)?.name ?? r}`);
       received.set(pid, (received.get(pid) ?? 0) + moved);
     }
-    if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid);
+    if (got.length) log(ctx, `${playerName(ctx, pid)} receives ${got.join(', ')}`, pid, { kind: 'production' });
   }
   for (const [r, t] of totals) {
     if (bankHas(ctx, r) < t.total && t.claimants > 1) log(ctx, `The bank is short of ${ctx.L.resources.get(r)?.name ?? r}; nobody receives it`);
