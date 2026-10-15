@@ -1,9 +1,11 @@
-/** Turn bar, dice, timer, bank, log, chat and game-over overlay. */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { GameDefinition, GameState } from '../../engine/schema';
+/** Dice, turn timer, bank row, game log, chat, globals/awards panel and the game-over overlay. */
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { GameDefinition, GameState, LogEntry, PlayerState, ResourceFlow } from '../../engine/schema';
+import { GameIcon } from '../shared/gameIcons';
 import { hasIcon, Icon } from '../shared/icons';
 import { useEngine } from './engineContext';
-import { PlayerDot, PlayerName, ResChip } from './chips';
+import { CardBack, deckColor, MiniCards, ResCard } from './cards';
+import { PlayerName } from './chips';
 import { faceInfo, globalRows } from './display';
 import { byId, contrastText } from './util';
 
@@ -18,11 +20,11 @@ const PIPS: Record<number, [number, number][]> = {
   6: [[7, 6.5], [17, 6.5], [7, 12], [17, 12], [7, 17.5], [17, 17.5]],
 };
 
-function Die({ value, red }: { value: number; red?: boolean }) {
+export function Die({ value, size = 34, red }: { value: number; size?: number; red?: boolean }) {
   const pips = PIPS[value];
   return (
-    <svg className="g-die" viewBox="0 0 24 24" width={34} height={34} aria-label={`die ${value}`}>
-      <rect x="1" y="1" width="22" height="22" rx="5" className={red ? 'g-die-face g-die-face--red' : 'g-die-face'} />
+    <svg className="g-die" viewBox="0 0 24 24" width={size} height={size} aria-label={`die ${value}`} role="img">
+      <rect x="1" y="1" width="22" height="22" rx="4.5" className={red ? 'g-die-face g-die-face--red' : 'g-die-face'} />
       {pips ? (
         pips.map(([x, y], i) => <circle key={i} cx={x} cy={y} r="2.1" className="g-die-pip" />)
       ) : (
@@ -34,24 +36,27 @@ function Die({ value, red }: { value: number; red?: boolean }) {
   );
 }
 
+/** The last roll, drawn as two large dice (bottom-right of the board). */
 export function DiceDisplay({ def, state }: { def: GameDefinition; state: GameState }) {
   const roll = state.lastRoll;
   const [anim, setAnim] = useState(false);
-  const key = roll ? `${state.version}:${roll.dice.join(',')}` : '';
+  const key = roll ? `${state.version}:${roll.dice.join(',')}:${state.turn}` : '';
   const prev = useRef(key);
   useEffect(() => {
     if (key && prev.current !== key) {
+      const changedRoll = prev.current.split(':').slice(1).join(':') !== key.split(':').slice(1).join(':');
       prev.current = key;
+      if (!changedRoll) return;
       setAnim(true);
-      const t = setTimeout(() => setAnim(false), 500);
+      const t = setTimeout(() => setAnim(false), 600);
       return () => clearTimeout(t);
     }
   }, [key]);
-  if (!roll) return <div className="g-dice g-muted g-small">No roll yet</div>;
+  if (!roll) return null;
   return (
-    <div className={`g-dice${anim ? ' g-dice--anim' : ''}`} title={`Rolled ${roll.total}`}>
+    <div className={`g-dice${anim ? ' g-dice--anim' : ''}`} title={`Rolled ${roll.total}`} aria-label={`Last roll: ${roll.total}`}>
       {roll.dice.map((d, i) => (
-        <Die key={i} value={d} red={i === 1 && roll.dice.length === 2} />
+        <Die key={i} value={d} size={52} />
       ))}
       {(roll.event ?? []).map((face, i) => {
         const dieDef = def.dice.eventDice?.[i];
@@ -66,7 +71,7 @@ export function DiceDisplay({ def, state }: { def: GameDefinition; state: GameSt
             title={`${dieDef?.id ?? 'Event die'}: ${f.label}`}
             data-face={face}
           >
-            {f.icon && hasIcon(f.icon) ? <Icon name={f.icon} label={f.label} size={18} fill={bg ? (fg === '#fff' ? '#fff' : '#222') : '#ddd'} /> : null}
+            {f.icon && hasIcon(f.icon) ? <Icon name={f.icon} label={f.label} size={22} fill={bg ? (fg === '#fff' ? '#fff' : '#222') : '#ddd'} /> : null}
             <span className="g-eventdie-label">{f.label}</span>
           </span>
         );
@@ -78,66 +83,81 @@ export function DiceDisplay({ def, state }: { def: GameDefinition; state: GameSt
 
 /* --------------------------------- timer ---------------------------------- */
 
-/** Authoritative turn-timer deadline from the room host (epoch ms; null = no timer running). */
-export interface TimerInfo { deadline: number | null; player: string | null }
-
 /**
- * Countdown. With `timer` (from the host) it counts to the host's deadline for whoever must act;
- * without it (dev harness) it is a client-side estimate that restarts when the turn changes.
+ * Authoritative turn-timer from the room host: epoch ms by which `player` must act (null = no timer
+ * running). Newer hosts also send `stage` (counting down to the roll, or the turn) and `total`
+ * (seconds the countdown was armed with, for the progress bar); both are optional.
  */
-export function TurnTimer({ state, timer }: { state: GameState; timer?: TimerInfo }) {
-  const total = timer ? (timer.deadline ? 1 : 0) : state.settings.turnTimerSeconds;
-  const key = `${state.turn}:${state.currentPlayerIndex}:${state.phase}`;
-  const [start, setStart] = useState(() => Date.now());
-  const [now, setNow] = useState(() => Date.now());
-  const lastKey = useRef(key);
-  useEffect(() => {
-    if (lastKey.current !== key) {
-      lastKey.current = key;
-      setStart(Date.now());
-    }
-  }, [key]);
-  useEffect(() => {
-    if (!total) return;
-    const t = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(t);
-  }, [total]);
-  if (!total) return null;
-  const left = timer?.deadline
-    ? Math.max(0, Math.ceil((timer.deadline - now) / 1000))
-    : Math.max(0, Math.ceil(total - (now - start) / 1000));
-  const mm = Math.floor(left / 60);
-  const ss = String(left % 60).padStart(2, '0');
-  const who = timer?.player ? state.players.find((p) => p.id === timer.player)?.name : undefined;
-  return (
-    <span className={`g-timer${left <= 10 ? ' g-timer--low' : ''}`} title={who ? `Time left for ${who}` : 'Turn timer'} role="timer">
-      ⏱ {mm}:{ss}
-    </span>
-  );
+export interface TimerInfo {
+  deadline: number | null;
+  player: string | null;
+  stage?: 'roll' | 'turn';
+  total?: number;
 }
 
-/* -------------------------------- turn bar -------------------------------- */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [active]);
+  return now;
+}
 
-const PHASE_LABEL: Record<string, string> = {
-  setup: 'Setup',
-  preRoll: 'Roll',
-  main: 'Main',
-  specialBuild: 'Special build',
-  gameOver: 'Game over',
-};
+/**
+ * Countdown box "mm:ss" with a progress bar. With `timer` (from the host) it counts to the host's
+ * deadline; without it (dev harness) it is a client-side estimate that restarts when the turn changes.
+ */
+export function TurnTimer({ state, timer }: { state: GameState; timer?: TimerInfo }) {
+  const fallbackTotal = state.settings.turnTimerSeconds;
+  const turnKey = `${state.turn}:${state.currentPlayerIndex}:${state.phase}`;
+  const [start, setStart] = useState(() => Date.now());
+  const lastKey = useRef(turnKey);
+  useEffect(() => {
+    if (lastKey.current !== turnKey) {
+      lastKey.current = turnKey;
+      setStart(Date.now());
+    }
+  }, [turnKey]);
+  const running = timer ? !!timer.deadline : fallbackTotal > 0;
+  const now = useNow(running);
 
-export function TurnIndicator({ state, playerId, timer }: { state: GameState; playerId: string; timer?: TimerInfo }) {
-  const cur = state.players.find((p) => p.id === state.turnOrder[state.currentPlayerIndex]);
-  const mine = cur?.id === playerId;
+  // Without `total` from the host, remember what the countdown was armed with: the remaining time
+  // when the deadline was first seen (re-armed when the player/stage changes or time is added).
+  const armed = useRef<{ key: string; deadline: number; total: number } | null>(null);
+  let total = 0;
+  let left = 0;
+  if (timer) {
+    if (timer.deadline) {
+      left = Math.max(0, (timer.deadline - now) / 1000);
+      const key = `${timer.player}:${timer.stage ?? ''}`;
+      const a = armed.current;
+      if (!a || a.key !== key || timer.deadline > a.deadline) {
+        armed.current = { key, deadline: timer.deadline, total: Math.max(left, a && a.key === key ? a.total : 0) };
+      }
+      total = timer.total ?? armed.current!.total;
+    }
+  } else if (fallbackTotal) {
+    total = fallbackTotal;
+    left = Math.max(0, total - (now - start) / 1000);
+  }
+  if (!running) return null;
+  const secs = Math.ceil(left);
+  const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+  const ss = String(secs % 60).padStart(2, '0');
+  const who = timer?.player ? state.players.find((p) => p.id === timer.player) : undefined;
+  const pct = total > 0 ? Math.max(0, Math.min(1, left / total)) : 0;
+  const stage = timer?.stage === 'roll' ? 'to roll' : timer?.stage === 'turn' ? 'turn' : '';
   return (
-    <div className={`g-turn${mine ? ' g-turn--mine' : ''}`} style={{ ['--pc' as string]: cur?.color ?? '#888' }}>
-      <span className="g-turn-who">
-        {mine ? <b>Your turn</b> : <><PlayerName p={cur} /><span className="g-muted">'s turn</span></>}
-      </span>
-      <span className="g-turn-meta g-muted g-small">
-        Turn {state.turn} · {PHASE_LABEL[state.phase] ?? state.phase}
-      </span>
-      <TurnTimer state={state} timer={timer} />
+    <div
+      className={`g-timerbox${secs <= 10 ? ' g-timerbox--low' : ''}${timer?.stage ? ` g-timerbox--${timer.stage}` : ''}`}
+      title={who ? `Time left for ${who.name}${stage ? ` (${stage})` : ''}` : 'Turn timer'}
+      style={who ? { ['--pc' as string]: who.color } : undefined}
+    >
+      <span role="timer" className="g-timer">{mm}:{ss}</span>
+      {stage && <span className="g-timer-stage">{stage}</span>}
+      <span className="g-timer-bar" aria-hidden><i style={{ width: `${pct * 100}%` }} /></span>
     </div>
   );
 }
@@ -147,18 +167,25 @@ export function TurnIndicator({ state, playerId, timer }: { state: GameState; pl
 export function BankDisplay({ def, state }: { def: GameDefinition; state: GameState }) {
   const decks = def.decks.filter((d) => state.decks[d.id]);
   const showBank = !state.settings.hideBankCards && Object.keys(state.bank).length > 0;
-  if (!showBank && decks.length === 0) return null;
   return (
-    <div className="g-bank" aria-label="Bank">
-      <span className="g-muted g-small">Bank</span>
+    <div className="g-bank" aria-label="Bank" data-anchor="bank">
+      <span className="g-bank-icon" title={showBank ? 'Bank' : 'Bank (card counts hidden)'}>
+        <GameIcon name="bank" size={30} />
+      </span>
       {showBank &&
         def.resources.map((r) => {
           const n = state.bank[r.id];
-          return <ResChip key={r.id} def={def} id={r.id} amount={n === undefined || n < 0 ? '∞' : n} small title={`${r.name} in bank`} />;
+          const label = n === undefined || n < 0 ? '∞' : n;
+          return (
+            <span key={r.id} className={`g-bank-res${n === 0 ? ' g-bank-res--out' : ''}`} data-bank-res={r.id} title={`${r.name}: ${label} in bank`}>
+              <ResCard def={def} id={r.id} size="sm" title="" />
+              <b>{label}</b>
+            </span>
+          );
         })}
       {decks.map((d) => (
-        <span key={d.id} className="g-reschip g-reschip--sm g-deckchip" style={{ background: d.color ?? '#7b68b5' }} title={`${d.name}: cards left`}>
-          <Icon name="card" size={12} fill="rgba(255,255,255,0.3)" stroke="#fff" />
+        <span key={d.id} className="g-bank-res g-bank-deck" data-bank-deck={d.id} title={`${d.name}: ${state.decks[d.id].draw.length} cards left`}>
+          <CardBack size="sm" dev color={d.color ?? deckColor(def, d.id)} />
           <b>{state.decks[d.id].draw.length}</b>
         </span>
       ))}
@@ -172,12 +199,12 @@ export function BankDisplay({ def, state }: { def: GameDefinition; state: GameSt
  * Generic "board state" panel: global counters (GameState.globals, labelled by
  * def.display.globals; `max` draws a track) and every award with its holder.
  */
-export function GameInfoPanel({ def, state, playerId }: { def: GameDefinition; state: GameState; playerId: string }) {
-  const rows = globalRows(def, state);
-  const awards = def.awards;
+export function GameInfoPanel({ def, state, playerId, show = 'both' }: { def: GameDefinition; state: GameState; playerId: string; show?: 'globals' | 'awards' | 'both' }) {
+  const rows = show === 'awards' ? [] : globalRows(def, state);
+  const awards = show === 'globals' ? [] : def.awards;
   if (rows.length === 0 && awards.length === 0) return null;
   return (
-    <section className="g-panel g-info" aria-label="Game info">
+    <section className={`g-info g-info--${show}`} aria-label={show === 'globals' ? 'Board counters' : show === 'awards' ? 'Awards' : 'Game info'}>
       {rows.length > 0 && (
         <div className="g-globals">
           {rows.map((r) => {
@@ -200,7 +227,7 @@ export function GameInfoPanel({ def, state, playerId }: { def: GameDefinition; s
                       <i style={{ width: `${pct * 100}%` }} />
                     </span>
                   )
-                ) : null}
+                ) : <span />}
                 <b className="g-global-val">{r.value}{r.max ? <span className="g-muted">/{r.max}</span> : null}</b>
               </div>
             );
@@ -209,13 +236,12 @@ export function GameInfoPanel({ def, state, playerId }: { def: GameDefinition; s
       )}
       {awards.length > 0 && (
         <div className="g-awards">
-          <h4>Awards</h4>
           {awards.map((a) => {
             const holder = state.players.find((p) => p.id === state.awards[a.id]);
             const keep = a.mode === 'keepUntilBeaten';
             return (
               <div key={a.id} className={`g-award${holder ? ' g-award--held' : ''}${holder?.id === playerId ? ' g-award--mine' : ''}`} data-award={a.id}>
-                <Icon name="trophy" size={14} fill={holder ? '#f1c232' : '#777'} />
+                <GameIcon name="trophy" size={14} color={holder ? '#f1c232' : '#777'} />
                 <span className="g-grow">
                   {a.name}
                   <span className="g-muted g-small">{' '}{[a.vp ? `+${a.vp} VP` : '', a.min > 0 ? `min ${a.min}` : ''].filter(Boolean).join(' · ')}</span>
@@ -231,7 +257,7 @@ export function GameInfoPanel({ def, state, playerId }: { def: GameDefinition; s
   );
 }
 
-/* ------------------------------- log + chat -------------------------------- */
+/* ---------------------------------- log ----------------------------------- */
 
 function useAutoScroll(dep: unknown) {
   const ref = useRef<HTMLDivElement>(null);
@@ -242,30 +268,117 @@ function useAutoScroll(dep: unknown) {
   return ref;
 }
 
-export function GameLog({ state }: { state: GameState }) {
-  const ref = useAutoScroll(state.log.length);
-  const colors = useMemo(() => new Map(state.players.map((p) => [p.id, p])), [state.players]);
+/** Sum of the cards a flow list moves, filtered. */
+function sumFlows(flows: ResourceFlow[], pick: (f: ResourceFlow) => boolean): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const f of flows) if (pick(f)) for (const [r, n] of Object.entries(f.res)) out[r] = (out[r] ?? 0) + n;
+  return out;
+}
+const nonEmpty = (m: Record<string, number>) => Object.values(m).some((n) => n > 0);
+
+function Who({ p, fallback }: { p: PlayerState | undefined; fallback?: string }) {
+  if (!p) return <b className="g-log-name">{fallback ?? 'Someone'}</b>;
+  return <b className="g-log-name" style={{ color: `color-mix(in srgb, ${p.color} 70%, var(--g-text))` }}>{p.name}</b>;
+}
+
+/** One log line: structured (mini cards, dice, piece icons) when the entry carries data, else text. */
+export function LogLine({ def, state, e }: { def: GameDefinition; state: GameState; e: LogEntry }) {
+  const byPid = (id: string | undefined) => (id ? state.players.find((p) => p.id === id) : undefined);
+  const p = byPid(e.player);
+  const flows = e.flows ?? [];
+  const other = (f: ResourceFlow) => (f.from === e.player ? f.to : f.from);
+  let body: ReactNode = null;
+  switch (e.kind) {
+    case 'roll': {
+      const extra = /\(([^)]*)\)\s*$/.exec(e.text)?.[1];
+      body = (
+        <>
+          <Who p={p} /> rolled{' '}
+          <span className="g-log-dice">{(e.dice ?? []).map((d, i) => <Die key={i} value={d} size={18} />)}</span>
+          {extra && <span className="g-muted"> ({extra})</span>}
+        </>
+      );
+      break;
+    }
+    case 'production':
+    case 'gain': {
+      const got = sumFlows(flows, (f) => f.to === e.player);
+      if (nonEmpty(got)) body = <><Who p={p} /> got <MiniCards def={def} res={got} /></>;
+      break;
+    }
+    case 'build': {
+      const pd = byId(def.pieces, e.piece);
+      body = (
+        <>
+          <Who p={p} /> {/upgrades/.test(e.text) ? 'upgraded to' : 'built'} a{' '}
+          <span className="g-log-piece" title={pd?.name}>
+            <GameIcon name={pd?.icon} alt={[e.piece]} label={pd?.name} size={16} color={p?.color} />
+          </span>{' '}
+          {pd?.name ?? e.piece}
+        </>
+      );
+      break;
+    }
+    case 'bankTrade':
+    case 'trade': {
+      const gave = sumFlows(flows, (f) => f.from === e.player);
+      const got = sumFlows(flows, (f) => f.to === e.player);
+      const partner = flows.map(other).find((x) => x !== 'bank');
+      body = (
+        <>
+          <Who p={p} /> gave <MiniCards def={def} res={gave} /> and got <MiniCards def={def} res={got} />{' '}
+          {e.kind === 'bankTrade' ? 'from the bank' : <>from <Who p={byPid(partner)} fallback={partner} /></>}
+        </>
+      );
+      break;
+    }
+    case 'steal': {
+      const got = sumFlows(flows, (f) => f.to === e.player);
+      const victim = flows.map(other).find((x) => x !== 'bank');
+      if (nonEmpty(got)) body = <><Who p={p} /> stole <MiniCards def={def} res={got} /> from <Who p={byPid(victim)} fallback={victim} /></>;
+      break;
+    }
+    case 'discard': {
+      const lost = sumFlows(flows, (f) => f.from === e.player);
+      if (nonEmpty(lost)) body = <><Who p={p} /> discarded <MiniCards def={def} res={lost} /></>;
+      break;
+    }
+  }
+  if (!body) {
+    // Plain text; engine lines usually start with the player's name: colour it instead of repeating it.
+    const named = !!p && e.text.startsWith(p.name);
+    body = named ? <><Who p={p} />{e.text.slice(p!.name.length)}</> : <span>{e.text}</span>;
+    if (flows.length && e.kind !== 'buyCard' && e.kind !== 'action') {
+      body = (
+        <>
+          {body}{' '}
+          {flows.map((f, i) => <MiniCards key={i} def={def} res={f.res} />)}
+        </>
+      );
+    } else if (flows.length) {
+      const paid = sumFlows(flows, (f) => f.from === e.player && f.to === 'bank');
+      if (nonEmpty(paid)) body = <>{body} <span className="g-log-paid"><MiniCards def={def} res={paid} /></span></>;
+    }
+  }
   return (
-    <div className="g-log" ref={ref} aria-live="polite">
-      {state.log.length === 0 && <div className="g-muted g-small">Nothing yet.</div>}
-      {state.log.slice(-200).map((e, i) => {
-        const p = e.player ? colors.get(e.player) : undefined;
-        // Engine log lines usually already start with the player's name: bold it instead of repeating it.
-        const named = !!p && e.text.startsWith(p.name);
-        return (
-          <div key={i} className="g-log-row">
-            {p && <PlayerDot color={p.color} size={8} />}
-            {named ? (
-              <span><b className="g-log-name">{p!.name}</b>{e.text.slice(p!.name.length)}</span>
-            ) : (
-              <span>{e.text}</span>
-            )}
-          </div>
-        );
-      })}
+    <div className={`g-log-row${e.kind ? ` g-log-row--${e.kind}` : ''}`} data-kind={e.kind}>
+      {body}
     </div>
   );
 }
+
+export function GameLog({ def, state }: { def: GameDefinition; state: GameState }) {
+  const ref = useAutoScroll(state.log.length);
+  const shown = state.log.slice(-150);
+  return (
+    <div className="g-log" ref={ref} aria-live="polite" aria-label="Game log">
+      {state.log.length === 0 && <div className="g-muted g-small">Nothing yet.</div>}
+      {shown.map((e, i) => <LogLine key={state.log.length - shown.length + i} def={def} state={state} e={e} />)}
+    </div>
+  );
+}
+
+/* ---------------------------------- chat ---------------------------------- */
 
 export function Chat({
   state,
@@ -281,13 +394,13 @@ export function Chat({
   const byPid = useMemo(() => new Map(state.players.map((p) => [p.id, p])), [state.players]);
   return (
     <div className="g-chat">
-      <div className="g-chat-msgs" ref={ref}>
-        {chat.length === 0 && <div className="g-muted g-small">Say hi!</div>}
+      <div className="g-chat-msgs" ref={ref} aria-label="Chat messages">
+        {chat.length === 0 && <div className="g-muted g-small">No messages yet.</div>}
         {chat.map((m, i) => {
           const p = byPid.get(m.from);
           return (
             <div key={i} className="g-log-row" title={new Date(m.at).toLocaleTimeString()}>
-              <b className="g-log-name" style={{ color: p?.color }}>{p?.name ?? m.from}:</b>
+              <b className="g-log-name" style={p ? { color: `color-mix(in srgb, ${p.color} 70%, var(--g-text))` } : undefined}>{p?.name ?? m.from}:</b>
               <span>{m.text}</span>
             </div>
           );
@@ -303,33 +416,10 @@ export function Chat({
           setText('');
         }}
       >
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message…" maxLength={300} aria-label="Chat message" />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Say hello…" maxLength={300} aria-label="Chat message" />
         <button type="submit" className="g-btn g-btn--sm">Send</button>
       </form>
     </div>
-  );
-}
-
-export function LogChatTabs(props: Parameters<typeof Chat>[0]) {
-  const [tab, setTab] = useState<'log' | 'chat'>('log');
-  const [seen, setSeen] = useState(props.chat.length);
-  const unread = tab === 'chat' ? 0 : props.chat.length - seen;
-  const choose = (t: 'log' | 'chat') => {
-    setSeen(props.chat.length);
-    setTab(t);
-  };
-  return (
-    <section className="g-panel g-logchat">
-      <div className="g-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === 'log'} className={tab === 'log' ? 'g-tab g-tab--on' : 'g-tab'} onClick={() => choose('log')}>
-          Log
-        </button>
-        <button type="button" role="tab" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'g-tab g-tab--on' : 'g-tab'} onClick={() => choose('chat')}>
-          Chat {unread > 0 && <span className="g-badge g-badge--hot">{unread}</span>}
-        </button>
-      </div>
-      {tab === 'log' ? <GameLog state={props.state} /> : <Chat {...props} />}
-    </section>
   );
 }
 
@@ -356,7 +446,7 @@ export function GameOverOverlay({ def, state, playerId }: { def: GameDefinition;
   return (
     <div className="g-modal-backdrop g-gameover">
       <div className="g-modal" role="dialog" aria-label="Game over">
-        <Icon name="trophy" size={48} fill="#f1c232" />
+        <GameIcon name="trophy" size={56} color="#f1c232" />
         <h2>{winner ? (winner.id === playerId ? 'You win!' : `${winner.name} wins!`) : 'Game over'}</h2>
         <table className="g-vptable">
           <thead>

@@ -1,224 +1,209 @@
-/** Bank/port trade + player-offer builder dialog, and the live offers list. */
-import { useState } from 'react';
+/**
+ * Trade panel (colonist style, opens above the hand): cards you give (added by clicking your hand
+ * cards, removed by clicking them here), cards you want, then either trade with the bank / your
+ * harbors (lights up when the selection matches your rates, AvailableMoves.bankRates) or send the
+ * offer to some or all players. Also the live offers list.
+ */
 import type { AvailableMoves } from '../../engine';
 import type { Command, GameDefinition, GameState, TradeOffer } from '../../engine/schema';
-import { PlayerDot, PlayerName, ResChip } from './chips';
+import { GameIcon } from '../shared/gameIcons';
+import { MiniCards, ResCard } from './cards';
+import { Avatar } from './Players';
 import { byId, cleanMap, isRedacted, sumMap } from './util';
 
-interface DialogProps {
+export interface TradeDraft {
+  give: Record<string, number>;
+  get: Record<string, number>;
+  /** Players to offer to; null = everyone. */
+  to: string[] | null;
+}
+
+export const emptyDraft = (): TradeDraft => ({ give: {}, get: {}, to: null });
+
+/** Bank / harbor rate for one resource. */
+export function bankRate(def: GameDefinition, moves: AvailableMoves, id: string): number {
+  const r = byId(def.resources, id);
+  return moves.bankRates[id] ?? (r ? def.trade.bankRates[r.kind] : undefined) ?? 4;
+}
+
+/** Can `give` -> `get` be done with the bank? Returns null if so, else why not. */
+export function bankTradeProblem(def: GameDefinition, state: GameState, moves: AvailableMoves, give: Record<string, number>, get: Record<string, number>): string | null {
+  const g = cleanMap(give), w = cleanMap(get);
+  if (!Object.keys(g).length) return 'Choose cards to give';
+  if (!Object.keys(w).length) return 'Choose what you want';
+  let lots = 0;
+  for (const [id, n] of Object.entries(g)) {
+    const rate = bankRate(def, moves, id);
+    if (n % rate !== 0) return `The bank takes ${byId(def.resources, id)?.name ?? id} in lots of ${rate} (${rate}:1)`;
+    lots += n / rate;
+  }
+  if (Object.keys(w).some((id) => g[id])) return 'You cannot get a resource you give';
+  const want = sumMap(w);
+  if (lots !== want) return `Your cards are worth ${lots} card${lots === 1 ? '' : 's'} at the bank; you asked for ${want}`;
+  const bankKnown = !state.settings.hideBankCards && Object.keys(state.bank).length > 0;
+  if (bankKnown) {
+    for (const [id, n] of Object.entries(w)) {
+      const supply = state.bank[id];
+      if (supply !== undefined && supply >= 0 && supply < n) return `The bank has only ${supply} ${byId(def.resources, id)?.name ?? id}`;
+    }
+  }
+  return null;
+}
+
+interface PanelProps {
   def: GameDefinition;
   state: GameState;
   playerId: string;
   moves: AvailableMoves;
   send: (c: Command) => void;
+  draft: TradeDraft;
+  onChange: (d: TradeDraft) => void;
   onClose: () => void;
+  /** Why trading is blocked right now (null = allowed). */
+  blocked: string | null;
 }
 
-export function TradeDialog(props: DialogProps) {
-  const { def, onClose } = props;
-  const [tab, setTab] = useState<'bank' | 'players'>('bank');
-  return (
-    <div className="g-modal-backdrop" onClick={onClose}>
-      <div className="g-modal g-modal--wide" role="dialog" aria-label="Trade" onClick={(e) => e.stopPropagation()}>
-        <div className="g-modal-head">
-          <div className="g-tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={tab === 'bank'} className={tab === 'bank' ? 'g-tab g-tab--on' : 'g-tab'} onClick={() => setTab('bank')}>
-              Bank &amp; ports
-            </button>
-            {def.trade.playerTrading && (
-              <button type="button" role="tab" aria-selected={tab === 'players'} className={tab === 'players' ? 'g-tab g-tab--on' : 'g-tab'} onClick={() => setTab('players')}>
-                Players
-              </button>
-            )}
-          </div>
-          <button type="button" className="g-x" onClick={onClose} aria-label="Close">×</button>
-        </div>
-        {tab === 'bank' ? <BankTrade {...props} /> : <PlayerTrade {...props} />}
-      </div>
-    </div>
-  );
-}
-
-function BankTrade({ def, state, playerId, moves, send, onClose }: DialogProps) {
-  const me = state.players.find((p) => p.id === playerId)!;
-  const [give, setGive] = useState<Record<string, number>>({});
-  const [get, setGet] = useState<Record<string, number>>({});
-  const rate = (id: string) => {
-    const r = byId(def.resources, id);
-    return moves.bankRates[id] ?? (r ? def.trade.bankRates[r.kind] : undefined) ?? 4;
-  };
-  const lots = Object.entries(give).reduce((a, [id, n]) => a + n / rate(id), 0);
-  const want = sumMap(get);
-  const bankKnown = !state.settings.hideBankCards && Object.keys(state.bank).length > 0;
-  const ok = lots > 0 && lots === want;
-
-  return (
-    <div className="g-trade">
-      <div className="g-trade-col">
-        <h4>You give</h4>
-        <p className="g-muted g-small">Click to add one trade lot at your rate.</p>
-        <div className="g-trade-pool">
-          {def.resources.map((r) => {
-            const have = (me.resources[r.id] ?? 0) - (give[r.id] ?? 0);
-            const rt = rate(r.id);
-            return (
-              <button
-                key={r.id}
-                type="button"
-                className="g-trade-res"
-                disabled={have < rt}
-                title={`${r.name}: ${rt}:1`}
-                onClick={() => setGive((g) => ({ ...g, [r.id]: (g[r.id] ?? 0) + rt }))}
-              >
-                <ResChip def={def} id={r.id} amount={me.resources[r.id] ?? 0} />
-                <span className={rt < 4 ? 'g-rate g-rate--good' : 'g-rate'}>{rt}:1</span>
-              </button>
-            );
-          })}
-        </div>
-        <Selection def={def} map={give} onRemove={(id) => setGive((g) => cleanMap({ ...g, [id]: (g[id] ?? 0) - rate(id) }))} />
-      </div>
-      <div className="g-trade-col">
-        <h4>You get</h4>
-        <p className="g-muted g-small">One card per lot given.</p>
-        <div className="g-trade-pool">
-          {def.resources.map((r) => {
-            const supply = state.bank[r.id];
-            const out = bankKnown && supply !== undefined && supply >= 0 && supply - (get[r.id] ?? 0) <= 0;
-            return (
-              <button
-                key={r.id}
-                type="button"
-                className="g-trade-res"
-                disabled={out || give[r.id] !== undefined}
-                title={out ? `${r.name}: bank is out` : r.name}
-                onClick={() => setGet((g) => ({ ...g, [r.id]: (g[r.id] ?? 0) + 1 }))}
-              >
-                <ResChip def={def} id={r.id} amount={bankKnown && supply !== undefined && supply >= 0 ? supply : undefined} />
-              </button>
-            );
-          })}
-        </div>
-        <Selection def={def} map={get} onRemove={(id) => setGet((g) => cleanMap({ ...g, [id]: (g[id] ?? 0) - 1 }))} />
-      </div>
-      <div className="g-modal-foot g-trade-foot">
-        <span className="g-muted">
-          {lots} lot{lots === 1 ? '' : 's'} → {want} card{want === 1 ? '' : 's'}
-        </span>
-        <button type="button" className="g-btn g-btn--ghost" onClick={() => { setGive({}); setGet({}); }}>
-          Clear
-        </button>
-        <button
-          type="button"
-          className="g-btn g-btn--primary"
-          disabled={!ok}
-          onClick={() => {
-            send({ type: 'bankTrade', give: cleanMap(give), get: cleanMap(get) });
-            onClose();
-          }}
-        >
-          Trade with bank
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function PlayerTrade({ def, state, playerId, send, onClose }: DialogProps) {
+export function TradePanel({ def, state, playerId, moves, send, draft, onChange, onClose, blocked }: PanelProps) {
   const me = state.players.find((p) => p.id === playerId)!;
   const others = state.players.filter((p) => p.id !== playerId);
-  const [give, setGive] = useState<Record<string, number>>({});
-  const [get, setGet] = useState<Record<string, number>>({});
-  const [to, setTo] = useState<string[] | null>(null);
-  const ok = sumMap(give) > 0 && sumMap(get) > 0 && (to === null || to.length > 0)
-    && Object.keys(give).every((id) => !get[id]);
+  const held = (id: string) => (isRedacted(me) ? 0 : me.resources[id] ?? 0);
+  // The hand may have changed since cards were picked: never offer more than is held.
+  const give = cleanMap(Object.fromEntries(Object.entries(draft.give).map(([id, n]) => [id, Math.min(n, held(id))])));
+  const get = cleanMap(draft.get);
+  const set = (d: Partial<TradeDraft>) => onChange({ ...draft, give, get, ...d });
 
-  const stepper = (map: Record<string, number>, set: (m: Record<string, number>) => void, max?: (id: string) => number) =>
-    def.resources.map((r) => {
-      const v = map[r.id] ?? 0;
-      const lim = max ? max(r.id) : Infinity;
-      return (
-        <div key={r.id} className="g-stepper-row">
-          <ResChip def={def} id={r.id} amount={max ? lim : undefined} small />
-          <span className="g-grow g-small">{r.name}</span>
-          <button type="button" className="g-step" disabled={v <= 0} onClick={() => set(cleanMap({ ...map, [r.id]: v - 1 }))} aria-label={`less ${r.name}`}>−</button>
-          <b className="g-step-val">{v}</b>
-          <button type="button" className="g-step" disabled={v >= lim} onClick={() => set({ ...map, [r.id]: v + 1 })} aria-label={`more ${r.name}`}>+</button>
-        </div>
-      );
-    });
+  const bankWhy = blocked ?? bankTradeProblem(def, state, moves, give, get);
+  const overlap = Object.keys(get).some((id) => give[id]);
+  const offerWhy = blocked
+    ?? (!def.trade.playerTrading ? 'Player trading is off in this game' : null)
+    ?? (!others.length ? 'Nobody to trade with' : null)
+    ?? (!sumMap(give) ? 'Choose cards to give (click your hand)' : null)
+    ?? (!sumMap(get) ? 'Choose what you want' : null)
+    ?? (overlap ? 'You cannot ask for a resource you give' : null)
+    ?? (draft.to !== null && draft.to.length === 0 ? 'Choose who to offer to' : null);
+
+  const rates = def.resources.map((r) => ({ r, rate: bankRate(def, moves, r.id), dflt: def.trade.bankRates[r.kind] ?? 4 }));
+  const giveRates = Object.keys(give).map((id) => bankRate(def, moves, id));
+  const rateText = giveRates.length && giveRates.every((x) => x === giveRates[0]) ? `${giveRates[0]}:1` : '';
+
+  const toggleTo = (pid: string) => {
+    const cur = draft.to ?? others.map((p) => p.id);
+    const next = cur.includes(pid) ? cur.filter((x) => x !== pid) : [...cur, pid];
+    set({ to: next.length === others.length ? null : next });
+  };
 
   return (
-    <div className="g-trade">
-      <div className="g-trade-col">
-        <h4>You give</h4>
-        <div className="g-stepper-list">{stepper(give, setGive, (id) => (isRedacted(me) ? 0 : me.resources[id] ?? 0))}</div>
-      </div>
-      <div className="g-trade-col">
-        <h4>You want</h4>
-        <div className="g-stepper-list">{stepper(get, setGet)}</div>
-      </div>
-      <div className="g-trade-to">
-        <span className="g-muted">Offer to:</span>
-        <label className="g-check">
-          <input type="checkbox" checked={to === null} onChange={(e) => setTo(e.target.checked ? null : [])} /> Everyone
-        </label>
-        {to !== null &&
-          others.map((p) => (
-            <label key={p.id} className="g-check">
-              <input
-                type="checkbox"
-                checked={to.includes(p.id)}
-                onChange={(e) => setTo(e.target.checked ? [...to, p.id] : to.filter((x) => x !== p.id))}
-              />
-              <PlayerDot color={p.color} /> {p.name}
-            </label>
+    <section className="g-tradepanel" role="dialog" aria-label="Trade">
+      <header className="g-tp-head">
+        <GameIcon name="trade" size={20} />
+        <b>Trade</b>
+        {blocked && <span className="g-tp-blocked">{blocked}</span>}
+        <button type="button" className="g-x" onClick={onClose} aria-label="Close">×</button>
+      </header>
+
+      <div className="g-tp-row">
+        <span className="g-tp-label">You give</span>
+        <div className="g-tp-cards" data-testid="trade-give">
+          {Object.keys(give).length === 0 && <span className="g-tp-hint">Click cards in your hand to offer them</span>}
+          {def.resources.filter((r) => give[r.id]).map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className="g-tp-card"
+              aria-label={`remove ${r.name}`}
+              title={`${give[r.id]} ${r.name} — click to take one back`}
+              onClick={() => set({ give: cleanMap({ ...give, [r.id]: give[r.id] - 1 }) })}
+            >
+              <ResCard def={def} id={r.id} size="md" count={give[r.id]} title="" />
+            </button>
           ))}
+        </div>
       </div>
-      <div className="g-modal-foot g-trade-foot">
-        <button type="button" className="g-btn g-btn--ghost" onClick={() => { setGive({}); setGet({}); }}>
-          Clear
-        </button>
+
+      <div className="g-tp-row">
+        <span className="g-tp-label">You get</span>
+        <div className="g-tp-cards g-tp-want" data-testid="trade-get">
+          {def.resources.map((r) => {
+            const n = get[r.id] ?? 0;
+            return (
+              <span key={r.id} className={`g-tp-wantcard${n ? ' g-tp-wantcard--on' : ''}`}>
+                <button
+                  type="button"
+                  className="g-tp-card"
+                  aria-label={`want ${r.name}`}
+                  data-get-res={r.id}
+                  title={`Ask for one more ${r.name}`}
+                  onClick={() => set({ get: { ...get, [r.id]: n + 1 } })}
+                >
+                  <ResCard def={def} id={r.id} size="md" count={n || undefined} title="" />
+                </button>
+                {n > 0 && (
+                  <button type="button" className="g-tp-less" aria-label={`less ${r.name}`} onClick={() => set({ get: cleanMap({ ...get, [r.id]: n - 1 }) })}>
+                    −
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="g-tp-rates" aria-label="Your bank rates">
+        {rates.map(({ r, rate, dflt }) => (
+          <span key={r.id} className={`g-tp-rate${rate < dflt ? ' g-tp-rate--good' : ''}`} title={`${r.name}: give ${rate} for 1`}>
+            <ResCard def={def} id={r.id} size="xs" title="" />
+            {rate}:1
+          </span>
+        ))}
+      </div>
+
+      <footer className="g-tp-foot">
         <button
           type="button"
-          className="g-btn g-btn--primary"
-          disabled={!ok}
+          className={`g-btn g-tp-bank${bankWhy ? '' : ' g-tp-bank--ready'}`}
+          disabled={!!bankWhy}
+          title={bankWhy ?? 'Trade with the bank'}
+          aria-label="Trade with bank"
           onClick={() => {
-            send({ type: 'offerTrade', to, give: cleanMap(give), get: cleanMap(get) });
+            send({ type: 'bankTrade', give, get });
             onClose();
           }}
         >
-          Send offer
+          <GameIcon name="bank" size={20} />
+          Bank{rateText && <span className="g-tp-ratio">{rateText}</span>}
         </button>
-      </div>
-    </div>
-  );
-}
-
-function Selection({ def, map, onRemove }: { def: GameDefinition; map: Record<string, number>; onRemove: (id: string) => void }) {
-  const entries = Object.entries(map).filter(([, n]) => n > 0);
-  return (
-    <div className="g-trade-sel">
-      {entries.length === 0 ? (
-        <span className="g-muted g-small">nothing selected</span>
-      ) : (
-        entries.map(([id, n]) => (
-          <button key={id} type="button" className="g-unbtn" onClick={() => onRemove(id)} title="Remove">
-            <ResChip def={def} id={id} amount={n} />
+        {def.trade.playerTrading && others.length > 0 && (
+          <div className="g-tp-to" role="group" aria-label="Offer to">
+            {others.map((p) => {
+              const on = draft.to === null || draft.to.includes(p.id);
+              return (
+                <button key={p.id} type="button" className={`g-tp-player${on ? ' g-tp-player--on' : ''}`} aria-pressed={on} title={on ? `Offer to ${p.name}` : `Not offering to ${p.name}`} onClick={() => toggleTo(p.id)}>
+                  <Avatar color={p.color} size={22} />
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {def.trade.playerTrading && (
+          <button
+            type="button"
+            className="g-btn g-btn--primary"
+            disabled={!!offerWhy}
+            title={offerWhy ?? 'Send this offer'}
+            onClick={() => {
+              send({ type: 'offerTrade', to: draft.to, give, get });
+              onClose();
+            }}
+          >
+            Send offer
           </button>
-        ))
+        )}
+      </footer>
+      {(bankWhy && offerWhy && (sumMap(give) > 0 || sumMap(get) > 0)) && !blocked && (
+        <div className="g-tp-why g-muted g-small">{bankWhy}</div>
       )}
-    </div>
-  );
-}
-
-function MapChips({ def, map }: { def: GameDefinition; map: Record<string, number> }) {
-  return (
-    <span className="g-cost">
-      {Object.entries(map).map(([id, n]) => (
-        <ResChip key={id} def={def} id={id} amount={n} small />
-      ))}
-    </span>
+    </section>
   );
 }
 
@@ -232,22 +217,28 @@ export function TradeOffers({ def, state, playerId, send }: { def: GameDefinitio
     !!me && !isRedacted(me) && Object.entries(t.get).every(([id, n]) => (me.resources[id] ?? 0) >= n);
 
   return (
-    <section className="g-panel g-offers" aria-label="Trade offers">
-      <h4>Trade offers</h4>
+    <section className="g-offers" aria-label="Trade offers">
       {visible.map((t) => {
         const from = state.players.find((p) => p.id === t.from);
         const mine = t.from === playerId;
         const myResp = t.responses[playerId] ?? 'pending';
         return (
-          <div key={t.id} className={`g-offer${mine ? ' g-offer--mine' : ''}`}>
+          <div key={t.id} className={`g-offer${mine ? ' g-offer--mine' : ''}`} style={{ ['--pc' as string]: from?.color ?? '#888' }}>
             <div className="g-offer-head">
-              {mine ? <b>Your offer</b> : <PlayerName p={from} />}
+              <Avatar color={from?.color ?? '#888'} size={22} />
+              <b>{mine ? 'Your offer' : `${from?.name ?? '?'} offers`}</b>
               {t.to && <span className="g-muted g-small">to {t.to.map((id) => state.players.find((p) => p.id === id)?.name ?? id).join(', ')}</span>}
             </div>
             <div className="g-offer-body">
-              <span className="g-small g-muted">{mine ? 'give' : 'they give'}</span> <MapChips def={def} map={t.give} />
-              <span className="g-arrow">⇄</span>
-              <span className="g-small g-muted">{mine ? 'get' : 'you give'}</span> <MapChips def={def} map={t.get} />
+              <span className="g-offer-side">
+                <span className="g-small g-muted">{mine ? 'You give' : 'You get'}</span>
+                <MiniCards def={def} res={t.give} maxEach={5} size="sm" />
+              </span>
+              <GameIcon name="trade" size={16} className="g-arrow" />
+              <span className="g-offer-side">
+                <span className="g-small g-muted">{mine ? 'You get' : 'You give'}</span>
+                <MiniCards def={def} res={t.get} maxEach={5} size="sm" />
+              </span>
             </div>
             {mine ? (
               <div className="g-offer-resps">
@@ -257,14 +248,14 @@ export function TradeOffers({ def, state, playerId, send }: { def: GameDefinitio
                     const p = state.players.find((x) => x.id === pid);
                     return (
                       <span key={pid} className={`g-resp g-resp--${r}`}>
-                        <PlayerDot color={p?.color ?? '#888'} />
+                        <Avatar color={p?.color ?? '#888'} size={18} />
                         {p?.name ?? pid}
                         {r === 'accept' ? (
                           <button type="button" className="g-btn g-btn--sm g-btn--primary" onClick={() => send({ type: 'confirmTrade', tradeId: t.id, withPlayer: pid })}>
                             Trade
                           </button>
                         ) : (
-                          <span className="g-small"> {r === 'reject' ? '✗' : '…'}</span>
+                          <span className="g-small">{r === 'reject' ? ' ✗ declined' : ' …'}</span>
                         )}
                       </span>
                     );

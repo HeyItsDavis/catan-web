@@ -31,7 +31,7 @@ export function DevGameHarness() {
   });
   const [viewer, setViewer] = useState(ME);
   const [chat, setChat] = useState<Chat[]>(() => [{ from: 'p2', text: 'gl hf', at: Date.now() }]);
-  const [showTools, setShowTools] = useState(true);
+  const [showTools, setShowTools] = useState(() => new URLSearchParams(window.location.search).get('tools') !== '0');
 
   const log = (s: GameState, text: string, player?: string): GameState => ({ ...s, log: [...s.log, { turn: s.turn, player, text }] });
   const bump = (s: GameState): GameState => ({ ...s, version: s.version + 1 });
@@ -191,7 +191,7 @@ export function DevGameHarness() {
         chat={chat}
         sendChat={(text) => setChat((c) => [...c, { from: viewer, text, at: Date.now() }])}
       />
-      <div style={{ position: 'fixed', left: 8, bottom: 8, zIndex: 100, font: '12px system-ui', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: 8, borderRadius: 8, maxWidth: 260 }}>
+      <div style={{ position: 'fixed', right: 360, top: 8, zIndex: 100, font: '12px system-ui', background: 'rgba(0,0,0,0.8)', color: '#fff', padding: 8, borderRadius: 8, maxWidth: 260 }}>
         <button type="button" onClick={() => setShowTools((x) => !x)} style={{ font: 'inherit' }}>
           dev {showTools ? '▾' : '▸'}
         </button>

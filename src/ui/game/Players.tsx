@@ -1,295 +1,233 @@
-/** Own hand panel + opponents panel. Handles both full and redacted player state. */
-import type { AvailableMoves } from '../../engine';
-import type { CardInstance, Command, GameDefinition, GameState, PlayerState } from '../../engine/schema';
-import { Icon } from '../shared/icons';
+/**
+ * Player panels (colonist style): avatar + name, resource card back with count, deck card backs
+ * with counts, VP, awards, labelled stats and the pieces left in supply. One per opponent, and a
+ * larger one for the viewer. Everything comes from the definition (pieces, decks, awards, display
+ * hints) and works with full and redacted player state.
+ */
+import type { AwardDef, GameDefinition, GameState, PieceDef, PlayerState } from '../../engine/schema';
+import { GameIcon, hasGameIcon } from '../shared/gameIcons';
 import { useEngine } from './engineContext';
-import { PlayerDot, ResChip } from './chips';
-import { pluralKind, visibleStats } from './display';
-import { byId, HIDDEN_KEY, isHiddenCard, isRedacted, resourceTotal } from './util';
+import { CardBack, DevCard, deckColor } from './cards';
+import { visibleStats } from './display';
+import { cardsByDeck } from './Hand';
+import { byId, isHiddenCard, resourceTotal } from './util';
 
-/** Hand cards grouped by deck (definition order, unknown decks last). */
-function cardsByDeck(def: GameDefinition, cards: CardInstance[]): { deck: string; cards: CardInstance[] }[] {
-  const order = new Map(def.decks.map((d, i) => [d.id, i]));
-  const m = new Map<string, CardInstance[]>();
-  for (const c of cards) m.set(c.deck, [...(m.get(c.deck) ?? []), c]);
-  return [...m.entries()]
-    .sort(([a], [b]) => (order.get(a) ?? 99) - (order.get(b) ?? 99))
-    .map(([deck, cs]) => ({ deck, cards: cs }));
-}
-
-function StatTags({ def, stats }: { def: GameDefinition; stats: Record<string, number> }) {
+export function Avatar({ color, size = 34, title }: { color: string; size?: number; title?: string }) {
   return (
-    <>
-      {visibleStats(def, stats).map((st) => (
-        <span key={st.key} className="g-tag" data-stat={st.key}>
-          {st.icon && <Icon name={st.icon} label={st.label} size={12} fill="#ccc" />} {st.label}:{' '}
-          {st.max ? (
-            <span className="g-statpips" title={`${st.value} / ${st.max}`}>
-              {Array.from({ length: st.max }, (_, i) => <i key={i} className={i < st.value ? 'on' : ''} />)}
-            </span>
-          ) : (
-            st.value
-          )}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function awardsOf(def: GameDefinition, state: GameState, pid: string) {
-  return Object.entries(state.awards)
-    .filter(([, holder]) => holder === pid)
-    .map(([id]) => byId(def.awards, id))
-    .filter((a): a is NonNullable<typeof a> => !!a);
-}
-
-function deckColor(def: GameDefinition, deckId: string): string {
-  return byId(def.decks, deckId)?.color ?? '#7b68b5';
-}
-
-function CardTile({
-  def,
-  inst,
-  playable,
-  onPlay,
-}: {
-  def: GameDefinition;
-  inst: CardInstance;
-  playable?: boolean;
-  onPlay?: () => void;
-}) {
-  if (isHiddenCard(inst)) {
-    return (
-      <span className="g-card g-card--hidden" style={{ ['--deck' as string]: deckColor(def, inst.deck) }} title="Hidden card">
-        <Icon name="card" size={18} fill="rgba(255,255,255,0.2)" stroke="rgba(255,255,255,0.6)" />
-      </span>
-    );
-  }
-  const card = byId(def.cards, inst.card);
-  const name = card?.name ?? inst.card;
-  const tip = [card?.description, card?.vp ? `+${card.vp} VP` : '', playable ? 'Click to play' : ''].filter(Boolean).join('\n');
-  const content = (
-    <>
-      <Icon name={card?.icon ?? 'card'} label={name} size={18} fill="rgba(255,255,255,0.9)" stroke="#222" />
-      <span className="g-card-name">{name}</span>
-    </>
-  );
-  const style = { ['--deck' as string]: deckColor(def, inst.deck) };
-  return playable ? (
-    <button type="button" className="g-card g-card--playable" style={style} title={tip} onClick={onPlay}>
-      {content}
-    </button>
-  ) : (
-    <span className="g-card" style={style} title={tip}>
-      {content}
+    <span className="g-avatar" style={{ ['--pc' as string]: color, width: size, height: size }} title={title}>
+      <GameIcon name="avatar" size={Math.round(size * 0.62)} color="#fff" />
     </span>
   );
 }
 
-/* ------------------------------- own panel -------------------------------- */
+/** Icon for an award: a hint from its metric (route length / a stat with an icon) or a trophy. */
+export function awardIcon(def: GameDefinition, a: AwardDef): string {
+  const m = a.metric as unknown as Record<string, unknown>;
+  if (m && typeof m === 'object' && 'longestRoad' in m) return 'road';
+  const stat = m && typeof m === 'object' && 'stat' in m ? (m.stat as { key?: string })?.key : undefined;
+  if (stat) {
+    const icon = def.display?.stats?.find((s) => s.key === stat)?.icon;
+    if (icon) return icon === 'knight' ? 'army' : icon;
+    if (/knight|army|soldier/i.test(stat)) return 'army';
+  }
+  if (/army|knight/i.test(a.name)) return 'army';
+  if (/road|route/i.test(a.name)) return 'road';
+  return 'trophy';
+}
 
-export function SelfPanel({
-  def,
-  state,
-  me,
-  moves,
-  send,
-}: {
+/** Pieces that come from a limited per-player supply (shown as "left"). */
+function supplyPieces(def: GameDefinition): PieceDef[] {
+  return def.pieces.filter((p) => p.supply >= 0 && (p.cost || p.vp || p.productionMultiplier || p.network));
+}
+
+export function piecesLeft(state: GameState, p: PlayerState, pd: PieceDef): number {
+  const used = state.pieces.filter((x) => x.owner === p.id && x.type === pd.id).length;
+  return Math.max(0, pd.supply - used - (p.stats[`lost:${pd.id}`] ?? 0));
+}
+
+function Stat({ icon, value, title, color, testid, on, children }: {
+  icon: string; value: React.ReactNode; title: string; color?: string; testid?: string; on?: boolean; children?: React.ReactNode;
+}) {
+  return (
+    <span className={`g-stat${on ? ' g-stat--on' : ''}`} title={title} data-stat={testid}>
+      <GameIcon name={icon} size={16} color={color ?? 'currentColor'} label={title} />
+      <b>{value}</b>
+      {children}
+    </span>
+  );
+}
+
+export function PlayerPanel({ def, state, p, self, vp, vpHidden }: {
   def: GameDefinition;
   state: GameState;
-  me: PlayerState;
-  moves: AvailableMoves;
-  send: (c: Command) => void;
+  p: PlayerState;
+  self?: boolean;
+  vp: number;
+  /** Own panel: VP including hidden cards (when different). */
+  vpHidden?: number;
 }) {
-  const engine = useEngine();
-  const playable = new Set(moves.playableCards.map((c) => c.cardInstance));
-  const vpVisible = engine.computeVP(def, state, me.id, false);
-  const vpTotal = engine.computeVP(def, state, me.id, true);
-  const awards = awardsOf(def, state, me.id);
-  const redacted = isRedacted(me);
-  const kinds: { kind: string; list: GameDefinition['resources'] }[] = [];
-  for (const r of def.resources) {
-    const g = kinds.find((k) => k.kind === r.kind);
-    if (g) g.list.push(r); else kinds.push({ kind: r.kind, list: [r] });
-  }
-  const handTotal = resourceTotal(me);
-  const discardLimit = state.settings.discardLimit || def.discardLimit;
-  const deckGroups = cardsByDeck(def, me.hand);
+  const current = state.turnOrder[state.currentPlayerIndex];
+  const isTurn = p.id === current;
+  const prompted = state.prompts.some((x) => x.player === p.id);
+  const awardsHeld = def.awards.filter((a) => state.awards[a.id] === p.id);
+  const stats = visibleStats(def, p.stats);
+  const decks = cardsByDeck(def, p.hand);
+  const faceUp = self ? [] : p.hand.filter((c) => !isHiddenCard(c));
+  const target = state.settings.victoryPoints || def.victoryPoints;
+  const pieces = supplyPieces(def);
 
   return (
-    <section className="g-panel g-self" aria-label="Your hand">
-      <header className="g-panel-head">
-        <span className="g-pname">
-          <PlayerDot color={me.color} size={14} />
-          <b>{me.name}</b>
-        </span>
-        <span className="g-vp" title={vpTotal !== vpVisible ? `${vpVisible} visible + ${vpTotal - vpVisible} hidden` : 'Victory points'}>
-          <Icon name="star" size={14} fill="#f1c232" />
-          {vpTotal}
-          {vpTotal !== vpVisible && <span className="g-muted g-small"> ({vpVisible})</span>}
-          <span className="g-muted g-small">/{state.settings.victoryPoints || def.victoryPoints}</span>
-        </span>
-      </header>
-
-      {redacted ? (
-        <div className="g-hand" aria-label="Resources">
-          <span className="g-muted">{me.resources[HIDDEN_KEY]} cards</span>
+    <div
+      className={`g-ppanel ${self ? 'g-self' : 'g-opp'}${isTurn ? ' g-opp--turn' : ''}`}
+      style={{ ['--pc' as string]: p.color }}
+      data-player-panel={p.id}
+      aria-label={self ? 'You' : p.name}
+    >
+      <div className="g-pp-head">
+        <Avatar color={p.color} size={self ? 40 : 34} />
+        <div className="g-pp-name">
+          <b>{p.name}</b>
+          {self && <span className="g-muted g-small">(you)</span>}
+          {prompted && <span className="g-thinking" title="Deciding…">…</span>}
         </div>
-      ) : (
-        kinds.map(({ kind, list }) => (
-          <div key={kind} className="g-hand-group" data-kind={kind}>
-            {kinds.length > 1 && <h4>{pluralKind(kind)}</h4>}
-            <div className="g-hand" aria-label={pluralKind(kind)}>
-              {list.map((r) => {
-                const n = me.resources[r.id] ?? 0;
-                return (
-                  <div key={r.id} className={`g-hand-res${n === 0 ? ' g-hand-res--empty' : ''}`} title={r.name}>
-                    <ResChip def={def} id={r.id} amount={n} />
-                    <span className="g-hand-res-name">{r.name}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))
-      )}
-      {!redacted && discardLimit > 0 && handTotal > discardLimit && (
-        <div className="g-warn" role="note">
-          {handTotal} cards — more than {discardLimit}: you would discard on a 7
-        </div>
-      )}
+        <span className="g-pp-vp" title={vpHidden !== undefined && vpHidden !== vp ? `${vp} visible + ${vpHidden - vp} hidden (of ${target})` : `Victory points (of ${target})`}>
+          <GameIcon name="trophy" size={18} color="#f1c232" />
+          <b>{vpHidden ?? vp}</b>
+          {vpHidden !== undefined && vpHidden !== vp && <span className="g-muted g-small">({vp})</span>}
+        </span>
+      </div>
 
-      {deckGroups.map(({ deck, cards }) => {
-        const dd = byId(def.decks, deck);
-        const limit = dd?.handLimit;
-        const over = limit !== undefined && cards.length > limit;
-        const full = limit !== undefined && cards.length === limit;
-        return (
-          <div key={deck} className="g-subsec g-deckgroup" style={{ ['--deck' as string]: deckColor(def, deck) }} data-deck={deck}>
-            <h4>
-              <span className="g-deckdot" />
-              {dd?.name ?? (deckGroups.length > 1 ? deck : 'Cards')}
-              <span className={`g-deckcount${over ? ' g-deckcount--over' : full ? ' g-deckcount--full' : ''}`}>
-                {cards.length}{limit !== undefined ? `/${limit}` : ''}
+      <div className="g-opp-counts">
+        <span className="g-pp-cards" title="Resource cards">
+          <CardBack size="sm" />
+          <b>{resourceTotal(p)}</b>
+        </span>
+        {decks.length === 0 && def.decks.length > 0 && (
+          <span className="g-pp-cards" title="Cards in hand">
+            <CardBack size="sm" dev color={deckColor(def, def.decks[0].id)} />
+            <b>0</b>
+          </span>
+        )}
+        {decks.map(({ deck, cards }, i) => (
+          <span key={deck} className="g-pp-cards" title={i === 0 ? 'Cards in hand' : `${byId(def.decks, deck)?.name ?? deck} cards in hand`} data-deck={deck}>
+            <CardBack size="sm" dev color={deckColor(def, deck)} />
+            <b>{cards.length}</b>
+          </span>
+        ))}
+        {def.awards.map((a) => (
+          <Stat
+            key={a.id}
+            icon={awardIcon(def, a)}
+            on={awardsHeld.includes(a)}
+            value=''
+            title={`${a.name}${awardsHeld.includes(a) ? ` — held${a.vp ? ` (+${a.vp} VP)` : ''}` : ' — not held'}`}
+            color={awardsHeld.includes(a) ? '#f1c232' : undefined}
+            testid={`award:${a.id}`}
+          />
+        ))}
+        {stats.map((st) => (
+          <Stat
+            key={st.key}
+            icon={st.icon && hasGameIcon(st.icon) ? st.icon : st.icon ?? 'trophy'}
+            title={`${st.label}: ${st.value}${st.max ? ` / ${st.max}` : ''}`}
+            testid={st.key}
+            value={st.max ? '' : st.value}
+          >
+            {st.max ? (
+              <span className="g-statpips" aria-hidden>
+                {Array.from({ length: st.max }, (_, i) => <i key={i} className={i < st.value ? 'on' : ''} />)}
               </span>
-              {dd?.public && <span className="g-tag g-tag--sm" title="Everyone can see these cards">public</span>}
-            </h4>
-            {over && <div className="g-warn g-warn--bad" role="alert">Over the hand limit of {limit} — you must discard down</div>}
-            {full && <div className="g-warn" role="note">Hand limit reached ({limit})</div>}
-            <div className="g-cards">
-              {cards.map((c) => (
-                <CardTile
-                  key={c.id}
-                  def={def}
-                  inst={c}
-                  playable={playable.has(c.id)}
-                  onPlay={() => send({ type: 'playCard', cardInstance: c.id })}
-                />
-              ))}
-            </div>
-          </div>
-        );
-      })}
+            ) : null}
+          </Stat>
+        ))}
+        {p.played.length > 0 && !self && (
+          <span className="g-stat" title={`Played: ${p.played.map((c) => byId(def.cards, c.card)?.name ?? c.card).join(', ')}`}>
+            <GameIcon name="cardBack" size={16} />
+            <span className="g-small g-muted">played</span> <b>{p.played.length}</b>
+          </span>
+        )}
+      </div>
 
-      {me.played.length > 0 && (
-        <div className="g-subsec">
-          <h4>Played</h4>
-          <div className="g-cards g-cards--played">
-            {me.played.map((c) => (
-              <CardTile key={c.id} def={def} inst={c} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(awards.length > 0 || visibleStats(def, me.stats).length > 0) && (
-        <div className="g-tags">
-          {awards.map((a) => (
-            <span key={a.id} className="g-tag g-tag--award" title={a.vp ? `${a.name} (+${a.vp} VP)` : a.name}>
-              <Icon name="trophy" size={12} fill="#f1c232" /> {a.name}
+      {pieces.length > 0 && (
+        <div className="g-pp-pieces" aria-label="Pieces left">
+          {pieces.map((pd) => (
+            <span key={pd.id} className="g-pp-piece" title={`${pd.name}: ${piecesLeft(state, p, pd)} left`}>
+              <GameIcon name={pd.icon} alt={[pd.id]} label={pd.name} size={15} color={p.color} />
+              <b>{piecesLeft(state, p, pd)}</b>
             </span>
           ))}
-          <StatTags def={def} stats={me.stats} />
         </div>
       )}
+
+      {faceUp.length > 0 && (
+        <div className="g-pp-faceup" aria-label="Face-up cards">
+          {faceUp.map((c) => (
+            <DevCard key={c.id} def={def} inst={c} size="sm" />
+          ))}
+        </div>
+      )}
+
+      {self && p.played.length > 0 && (
+        <div className="g-pp-played">
+          <span className="g-muted g-small">Played</span>
+          {p.played.map((c) => (
+            <DevCard key={c.id} def={def} inst={c} size="sm" dim />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Opponents in turn order (starting after the viewer), then the viewer. */
+export function orderedPlayers(state: GameState, playerId: string): PlayerState[] {
+  const order = state.turnOrder.length ? state.turnOrder : state.players.map((p) => p.id);
+  const i = order.indexOf(playerId);
+  const rotated = i < 0 ? order : [...order.slice(i + 1), ...order.slice(0, i)];
+  return rotated.map((id) => state.players.find((p) => p.id === id)).filter((p): p is PlayerState => !!p);
+}
+
+export function OpponentsPanel({ def, state, playerId }: { def: GameDefinition; state: GameState; playerId: string }) {
+  const engine = useEngine();
+  const others = orderedPlayers(state, playerId);
+  return (
+    <section className="g-opps" aria-label="Opponents">
+      {others.map((p) => (
+        <PlayerPanel key={p.id} def={def} state={state} p={p} vp={engine.computeVP(def, state, p.id, false)} />
+      ))}
     </section>
   );
 }
 
-/* ------------------------------ opponents --------------------------------- */
+export function SelfPanel({ def, state, me }: { def: GameDefinition; state: GameState; me: PlayerState }) {
+  const engine = useEngine();
+  return (
+    <PlayerPanel
+      def={def}
+      state={state}
+      p={me}
+      self
+      vp={engine.computeVP(def, state, me.id, false)}
+      vpHidden={engine.computeVP(def, state, me.id, true)}
+    />
+  );
+}
 
-export function OpponentsPanel({ def, state, playerId }: { def: GameDefinition; state: GameState; playerId: string }) {
+/** Compact strip of opponents for phones: avatar, VP, card count. Also an animation target. */
+export function OpponentStrip({ def, state, playerId }: { def: GameDefinition; state: GameState; playerId: string }) {
   const engine = useEngine();
   const current = state.turnOrder[state.currentPlayerIndex];
-  const order = state.turnOrder.length ? state.turnOrder : state.players.map((p) => p.id);
-  const others = order
-    .map((id) => state.players.find((p) => p.id === id))
-    .filter((p): p is PlayerState => !!p && p.id !== playerId);
-
   return (
-    <section className="g-panel g-opps" aria-label="Opponents">
-      {others.map((p) => {
-        const awards = awardsOf(def, state, p.id);
-        const stats = visibleStats(def, p.stats);
-        const faceUp = p.hand.filter((c) => !isHiddenCard(c));
-        const hiddenCards = p.hand.length - faceUp.length;
-        const isTurn = p.id === current;
-        const prompted = state.prompts.some((x) => x.player === p.id);
-        return (
-          <div key={p.id} className={`g-opp${isTurn ? ' g-opp--turn' : ''}`} style={{ ['--pc' as string]: p.color }}>
-            <div className="g-opp-head">
-              <span className="g-pname">
-                <PlayerDot color={p.color} size={14} />
-                <b>{p.name}</b>
-                {prompted && <span className="g-thinking" title="Deciding…">…</span>}
-              </span>
-              <span className="g-vp" title="Visible victory points">
-                <Icon name="star" size={14} fill="#f1c232" />
-                {engine.computeVP(def, state, p.id, false)}
-              </span>
-            </div>
-            <div className="g-opp-counts">
-              <span title="Resource cards">
-                <Icon name="card" size={14} fill="#c9a86a" /> {resourceTotal(p)}
-              </span>
-              <span title="Cards in hand">
-                <Icon name="card" size={14} fill="#7b68b5" /> {hiddenCards}
-              </span>
-              {p.played.length > 0 && (
-                <span title={p.played.map((c) => byId(def.cards, c.card)?.name ?? c.card).join(', ')}>
-                  played {p.played.length}
-                </span>
-              )}
-            </div>
-            {!isRedacted(p) && resourceTotal(p) > 0 && (
-              <div className="g-opp-res">
-                {Object.entries(p.resources)
-                  .filter(([, n]) => n > 0)
-                  .map(([id, n]) => (
-                    <ResChip key={id} def={def} id={id} amount={n} small />
-                  ))}
-              </div>
-            )}
-            {faceUp.length > 0 && (
-              <div className="g-cards g-opp-cards" aria-label="Face-up cards">
-                {faceUp.map((c) => (
-                  <CardTile key={c.id} def={def} inst={c} />
-                ))}
-              </div>
-            )}
-            {(awards.length > 0 || stats.length > 0) && (
-              <div className="g-tags">
-                {awards.map((a) => (
-                  <span key={a.id} className="g-tag g-tag--award" title={a.vp ? `+${a.vp} VP` : a.name}>
-                    <Icon name="trophy" size={12} fill="#f1c232" /> {a.name}
-                  </span>
-                ))}
-                <StatTags def={def} stats={p.stats} />
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </section>
+    <div className="g-oppstrip" aria-label="Players">
+      {orderedPlayers(state, playerId).map((p) => (
+        <span key={p.id} className={`g-oppchip${p.id === current ? ' g-opp--turn' : ''}`} data-player-panel={p.id} style={{ ['--pc' as string]: p.color }} title={p.name}>
+          <Avatar color={p.color} size={24} />
+          <span className="g-oppchip-name">{p.name}</span>
+          <span className="g-oppchip-stat"><GameIcon name="trophy" size={12} color="#f1c232" />{engine.computeVP(def, state, p.id, false)}</span>
+          <span className="g-oppchip-stat"><GameIcon name="cardBack" size={12} />{resourceTotal(p)}</span>
+          {p.hand.length > 0 && <span className="g-oppchip-stat"><GameIcon name="devBack" size={12} />{p.hand.length}</span>}
+        </span>
+      ))}
+    </div>
   );
 }
