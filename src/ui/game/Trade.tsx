@@ -20,6 +20,14 @@ export interface TradeDraft {
 
 export const emptyDraft = (): TradeDraft => ({ give: {}, get: {}, to: null });
 
+/** Clicking a hand card: (open the draft and) put one more of it on the give side, up to what is held. */
+export function offerCard(draft: TradeDraft | null, id: string, held: number): TradeDraft {
+  const cur = draft ?? emptyDraft();
+  const n = Math.min((cur.give[id] ?? 0) + 1, held);
+  if (n <= 0) return cur;
+  return { ...cur, give: { ...cur.give, [id]: n } };
+}
+
 /** Bank / harbor rate for one resource. */
 export function bankRate(def: GameDefinition, moves: AvailableMoves, id: string): number {
   const r = byId(def.resources, id);

@@ -76,4 +76,6 @@ plus their declared settings.
 * TypeScript strict. Use `npm run typecheck`, `npm test` (vitest) and `npm run build`.
 * Engine changes need unit tests. The base game should be playable end to end in a
   headless test (`src/engine/__tests__/simulate.test.ts`).
-* Art uses flat colors plus simple inline SVG icons. Don't commit third-party art.
+* Art uses flat colors plus simple inline SVG icons. Don't commit third-party art, except the
+  game-icons.net icons (CC BY 3.0) embedded in `src/ui/shared/gameIconData.ts`; each one is credited
+  in the README and the game screen links to the credits.

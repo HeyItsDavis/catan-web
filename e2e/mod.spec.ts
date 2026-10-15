@@ -102,9 +102,9 @@ test('make a mod in the editor and play it with a friend', async ({ browser }) =
 
   await test.step('custom content is visible to both players', async () => {
     for (const p of [host, guest]) {
-      await expect(p.page.locator('.g-hand-res', { hasText: 'Spice' })).toBeVisible();
-      await expect(p.page.locator('.g-abtn[title^="Bazaar"]')).toBeVisible();
-      await expect(p.page.locator('.g-abtn[title^="Buy Spice Deck"]')).toBeVisible();
+      await expect(p.page.locator('[data-bank-res="spice"]')).toBeVisible();
+      await expect(p.page.locator('.g-abtn[aria-label^="Bazaar"]')).toBeVisible();
+      await expect(p.page.locator('.g-abtn[aria-label^="Buy Spice Deck"]')).toBeVisible();
     }
     await shot(guest, 'mod-game-guest');
   });
@@ -127,7 +127,7 @@ test('make a mod in the editor and play it with a friend', async ({ browser }) =
     await expect(guest.page.locator('.g-turn--mine')).toBeVisible();
     // The recipe costs the first two base resources (brick + lumber); hand them out.
     await hook(host, 'giveResources', id.Bob, { brick: 2, lumber: 2 });
-    const brew = guest.page.locator('.g-abtn[title^="Brew Tea"]');
+    const brew = guest.page.locator('.g-abtn[aria-label^="Brew Tea"]');
     await expect(brew).toBeDisabled(); // must roll first
     await hook(host, 'forceNextRoll', 8);
     await guest.page.getByRole('button', { name: 'Roll' }).click();
@@ -160,7 +160,7 @@ test('upload a mod file in the lobby', async ({ browser }) => {
   await expect(guest.page.locator('.setting-row', { hasText: 'Points to win' })).toContainText('12');
   await guest.page.getByRole('button', { name: "I'm ready" }).click();
   await host.page.getByRole('button', { name: 'Start game' }).click();
-  for (const p of [host, guest]) await expect(p.page.locator('.g-abtn[title^="Hold a festival"]')).toBeVisible();
+  for (const p of [host, guest]) await expect(p.page.locator('.g-abtn[aria-label^="Hold a festival"]')).toBeVisible();
   // Uploaded mods are kept in the uploader's library.
   const lib = await host.page.evaluate(() => localStorage.getItem('catanweb:mods') ?? '');
   expect(lib).toContain('harvest-festival');

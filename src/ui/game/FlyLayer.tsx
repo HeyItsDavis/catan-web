@@ -11,7 +11,7 @@ import { flightsFor, newLogEntries, type Flight, type Spot } from './flights';
 import { byId, contrastText, HIDDEN_KEY } from './util';
 
 const STEP_MS = 70;
-const DURATION_MS = 750;
+const DURATION_MS = 900;
 
 function reducedMotion(): boolean {
   try {

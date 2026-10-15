@@ -23,7 +23,7 @@ import { BankDisplay, Chat, DiceDisplay, GameInfoPanel, GameLog, GameOverOverlay
 import { PieceMenu } from './PieceMenu';
 import { OpponentsPanel, OpponentStrip, SelfPanel } from './Players';
 import { PieceActionBanner, PromptPanel, WaitingFor } from './PromptPanel';
-import { emptyDraft, TradeOffers, TradePanel, type TradeDraft } from './Trade';
+import { emptyDraft, offerCard, TradeOffers, TradePanel, type TradeDraft } from './Trade';
 import { globalRows } from './display';
 import { isRedacted } from './util';
 import './game.css';
@@ -129,11 +129,7 @@ export function GameScreen({ def, state, playerId, send, chat, sendChat, timer }
   const held = (id: string) => (me && !isRedacted(me) ? me.resources[id] ?? 0 : 0);
   const offerFromHand = tradeBlocked || !me
     ? null
-    : (id: string) => setDraft((d) => {
-      const cur = d ?? emptyDraft();
-      const n = Math.min((cur.give[id] ?? 0) + 1, held(id));
-      return { ...cur, give: { ...cur.give, [id]: n } };
-    });
+    : (id: string) => setDraft((d) => offerCard(d, id, held(id)));
 
   const boardPrompt = myPrompt && (myPrompt.kind === 'location' || myPrompt.kind === 'piece');
   const unread = mtab === 'chat' ? 0 : Math.max(0, chat.length - chatSeen);
