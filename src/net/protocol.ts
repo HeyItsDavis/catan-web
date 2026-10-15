@@ -39,8 +39,24 @@ export type ServerMessage =
   | { t: 'pong'; at: number }
   /** (additive) You were removed by the host; do not auto-reconnect. */
   | { t: 'kicked'; reason: string }
-  /** (additive) Turn timer: epoch ms by which `player` must act, or null when off. */
-  | { t: 'timer'; deadline: number | null; player: string | null }
+  /** (additive) Turn timer: epoch ms by which `player` must act, or null when off.
+   *  `stage` 'roll' = the short countdown before rolling; `total` = the countdown's full length
+   *  in seconds (the cap that bonus time can't exceed), for progress bars. */
+  | ({ t: 'timer' } & TimerInfo)
   /** (additive) The same player connected from another tab/device; this connection is closed
    *  and should NOT auto-reconnect (that would steal the seat back, forever). */
   | { t: 'replaced'; message: string };
+
+/** Turn-timer state the host broadcasts (see HostRoom.refreshTimer). */
+export type TimerStage = 'roll' | 'turn';
+export interface TimerInfo {
+  deadline: number | null;
+  player: string | null;
+  stage?: TimerStage;
+  total?: number;
+}
+
+/** Seconds the current player has to roll once the turn timer is on. */
+export const PRE_ROLL_SECONDS = 10;
+/** Seconds each action adds to the turn clock (never past the full turn length). */
+export const ACTION_BONUS_SECONDS = 10;

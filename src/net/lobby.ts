@@ -7,7 +7,7 @@ import type { GameDefinition, LobbyPlayer, LobbySettings, MapDef, ModDef, Settin
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 8;
 export const MAX_NAME_LENGTH = 20;
-export const TURN_TIMER_OPTIONS = [0, 60, 90, 120, 180] as const;
+export const TURN_TIMER_OPTIONS = [0, 30, 45, 60, 90, 120, 180, 240] as const;
 /** Max serialized size of the room's mod list (they travel to every guest). */
 export const MAX_MODS_BYTES = 4_000_000;
 

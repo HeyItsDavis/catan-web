@@ -3,6 +3,8 @@ import { RoomClient } from './client';
 import { HOST_SAVE_KEY, HostRoom, loadSavedRoom } from './host';
 import { MemoryNetwork } from './memoryTransport';
 import { fakeEngine, MemoryStorage, mod } from './testFixtures';
+import type { EngineApi } from './host';
+import type { GameState } from '../engine/schema';
 
 const flush = async (n = 5) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 
@@ -10,11 +12,11 @@ interface Setup { net: MemoryNetwork; host: HostRoom; storage: MemoryStorage; ho
 const cleanups: (() => void)[] = [];
 afterEach(() => { cleanups.splice(0).forEach((c) => c()); vi.useRealTimers(); });
 
-function setup(opts: { storage?: MemoryStorage; onTurnTimeout?: (r: HostRoom, p: string) => void } = {}): Setup {
+function setup(opts: { storage?: MemoryStorage; onTurnTimeout?: (r: HostRoom, p: string) => void; engine?: EngineApi } = {}): Setup {
   const net = new MemoryNetwork();
   const storage = opts.storage ?? new MemoryStorage();
   const host = new HostRoom({
-    roomCode: 'ABCDEF', hostPlayer: { id: 'host', name: 'Hana' }, engine: fakeEngine,
+    roomCode: 'ABCDEF', hostPlayer: { id: 'host', name: 'Hana' }, engine: opts.engine ?? fakeEngine,
     baseMod: { meta: { id: 'base', name: 'Base', version: '1' } }, storage,
     saved: loadSavedRoom(storage), onTurnTimeout: opts.onTurnTimeout,
   });
@@ -208,5 +210,90 @@ describe('HostRoom + RoomClient over memory transport', () => {
     expect(t.deadline).toBeGreaterThan(Date.now());
     await vi.advanceTimersByTimeAsync(60_000);
     expect(onTurnTimeout).toHaveBeenCalledWith(expect.anything(), 'host');
+  });
+
+  describe('turn timer stages', () => {
+    /** fakeEngine with phases: turns start in preRoll; any other command is a no-op "action". */
+    const phasedEngine: EngineApi = {
+      ...fakeEngine,
+      createGame: (...a) => ({ ...fakeEngine.createGame(...a), phase: 'preRoll' }),
+      applyCommand(def, state, playerId, cmd) {
+        if (state.turnOrder[state.currentPlayerIndex] !== playerId) return { ok: false, error: 'Not your turn' };
+        if (cmd.type === 'rollDice') return { ok: true, state: { ...state, version: state.version + 1, hasRolled: true, phase: 'main' } };
+        if (cmd.type === 'endTurn') {
+          const res = fakeEngine.applyCommand(def, state, playerId, cmd);
+          return res.ok ? { ok: true, state: { ...res.state, phase: 'preRoll' } } : res;
+        }
+        return { ok: true, state: { ...state, version: state.version + 1 } };
+      },
+    };
+    const action = { type: 'cancelTrade', tradeId: 'x' } as const;
+
+    async function started(onTurnTimeout?: (r: HostRoom, p: string) => void) {
+      const s = setup({ engine: phasedEngine, onTurnTimeout });
+      const ann = client(() => s.net.connect('ABCDEF'), 'ann', 'Ann');
+      await flush();
+      s.hostClient.send({ t: 'lobby:settings', settings: { ...s.hostClient.getSnapshot().settings!, turnTimerSeconds: 60 } });
+      ann.send({ t: 'lobby:ready', ready: true });
+      await flush();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+      s.hostClient.send({ t: 'lobby:start' });
+      await vi.advanceTimersByTimeAsync(10);
+      const timer = () => ann.getSnapshot().timer;
+      const left = () => Math.round(((timer().deadline ?? 0) - Date.now()) / 1000);
+      return { ...s, ann, timer, left };
+    }
+
+    it('gives 10s to roll, then the full turn, and +10s per action capped at the turn length', async () => {
+      const { hostClient, timer, left } = await started();
+      expect(timer()).toMatchObject({ player: 'host', stage: 'roll', total: 10 });
+      expect(left()).toBe(10);
+
+      hostClient.sendCommand({ type: 'rollDice' });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(timer()).toMatchObject({ player: 'host', stage: 'turn', total: 60 });
+      expect(left()).toBe(60);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      hostClient.sendCommand(action);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(left()).toBe(40);
+      hostClient.sendCommand(action);
+      await vi.advanceTimersByTimeAsync(10);
+      hostClient.sendCommand(action);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(left()).toBe(60); // never past the turn length
+
+      hostClient.sendCommand({ type: 'endTurn' });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(timer()).toMatchObject({ player: 'ann', stage: 'roll', total: 10 });
+    });
+
+    it('times out the roll after 10s', async () => {
+      const onTurnTimeout = vi.fn();
+      await started(onTurnTimeout);
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(onTurnTimeout).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(onTurnTimeout).toHaveBeenCalledWith(expect.anything(), 'host');
+    });
+
+    it("pauses the turn clock while another player answers a prompt", async () => {
+      const { host, hostClient, timer, left } = await started();
+      hostClient.sendCommand({ type: 'rollDice' });
+      await vi.advanceTimersByTimeAsync(20_000); // 40s left
+      const g = host.getGame()!;
+      const prompt = { id: 'p1', player: 'ann', kind: 'discard', options: [], optional: false } as unknown as GameState['prompts'][number];
+      host.debugSetGame({ ...g, prompts: [prompt] });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(timer()).toMatchObject({ player: 'ann', total: 60 });
+      expect(left()).toBe(60);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      host.debugSetGame({ ...host.getGame()!, prompts: [] });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(timer()).toMatchObject({ player: 'host', stage: 'turn' });
+      expect(left()).toBe(40);
+    });
   });
 });

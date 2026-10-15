@@ -82,7 +82,8 @@ function onTimeout(room: HostRoom, playerId: string): void {
     const name = game.players.find((p) => p.id === playerId)?.name ?? 'A player';
     const note = i === 0 ? `⏱ Time's up for ${name}; the game moved on for them` : undefined;
     if (room.applyAs(playerId, cmd, note) !== null) return;
-    if (cmd.type === 'endTurn') return;
+    // Missing the roll only costs the roll: the player still gets their turn time after it.
+    if (cmd.type === 'endTurn' || cmd.type === 'rollDice') return;
   }
 }
 

@@ -4,7 +4,7 @@
  * immutable snapshot + subscribe API (fits React's useSyncExternalStore).
  */
 import type { Command, GameState, LobbyPlayer, LobbySettings, ModDef } from '../engine/schema';
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from './protocol';
+import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage, type TimerInfo } from './protocol';
 import type { Connection, Connector, Unsubscribe } from './transport';
 import { parseServerMessage } from './validate';
 
@@ -32,7 +32,7 @@ export interface RoomSnapshot {
   game: GameState | null;
   chat: ChatEntry[];
   latencyMs: number | null;
-  timer: { deadline: number | null; player: string | null };
+  timer: TimerInfo;
   /** Consecutive failed connection attempts. */
   attempt: number;
 }
@@ -291,7 +291,7 @@ export class RoomClient {
         this.dropConn();
         return;
       case 'timer':
-        this.set({ timer: { deadline: msg.deadline, player: msg.player } });
+        this.set({ timer: { deadline: msg.deadline, player: msg.player, stage: msg.stage, total: msg.total } });
         return;
     }
   }

@@ -55,7 +55,7 @@ export function SettingsPanel({ room }: { room: RoomView }) {
         />
       </Row>
 
-      <Row label="Turn timer">
+      <Row label="Turn timer" hint="10 seconds to roll, then the turn length. Each action adds 10 seconds, up to the turn length.">
         {ro ? <Value>{s.turnTimerSeconds ? `${s.turnTimerSeconds}s` : 'Off'}</Value> : (
           <select value={s.turnTimerSeconds} onChange={(e) => set('turnTimerSeconds', Number(e.target.value))}>
             {TURN_TIMER_OPTIONS.map((t) => <option key={t} value={t}>{t ? `${t} seconds` : 'Off'}</option>)}

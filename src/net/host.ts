@@ -8,7 +8,9 @@
 import * as engine from '../engine';
 import { baseMod as defaultBaseMod } from '../content/base';
 import type { Command, GameDefinition, GameState, LobbySettings, ModDef } from '../engine/schema';
-import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from './protocol';
+import {
+  ACTION_BONUS_SECONDS, PRE_ROLL_SECONDS, PROTOCOL_VERSION, type ClientMessage, type ServerMessage, type TimerInfo, type TimerStage,
+} from './protocol';
 import { createLobby, lobbyReducer, type LobbyAction, type LobbyState } from './lobby';
 import { createMemoryPair } from './memoryTransport';
 import type { Connection, Listener, Unsubscribe } from './transport';
@@ -79,7 +81,9 @@ export class HostRoom {
   private sessions = new Set<Session>();
   private listeners: { listener: Listener; unsub: Unsubscribe[] }[] = [];
   private defCache: { key: ModDef[]; def: GameDefinition | null } | null = null;
-  private timer: { key: string; deadline: number | null; player: string | null } = { key: '', deadline: null, player: null };
+  private timer: TimerInfo = { deadline: null, player: null };
+  private turnClock: { key: string; stage: TimerStage; total: number; deadline: number; pausedRemaining: number | null } | null = null;
+  private promptClock: { key: string; deadline: number } | null = null;
   private timeoutHandle: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
   /** Fires after every state change (lobby or game). Useful for debugging/tests. */
@@ -91,7 +95,7 @@ export class HostRoom {
     this.engine = opts.engine ?? (engine as unknown as EngineApi);
     this.baseMod = opts.baseMod ?? defaultBaseMod;
     this.storage = opts.storage !== undefined ? opts.storage : defaultStorage();
-    this.now = opts.now ?? Date.now;
+    this.now = opts.now ?? (() => Date.now());
     this.random = opts.random ?? Math.random;
     this.onTurnTimeout = opts.onTurnTimeout;
 
@@ -312,7 +316,7 @@ export class HostRoom {
     if (this.game) {
       const def = this.getDefinition();
       if (def) this.send(session, { t: 'game:state', state: this.engine.redactFor(def, this.game, id) });
-      this.send(session, { t: 'timer', deadline: this.timer.deadline, player: this.timer.player });
+      this.send(session, { t: 'timer', ...this.timer });
     }
     this.persist();
   }
@@ -381,7 +385,7 @@ export class HostRoom {
     if (!res.ok) { this.send(session, { t: 'game:rejected', clientSeq, error: res.error }); return; }
     this.game = res.state;
     this.broadcastGame();
-    this.refreshTimer();
+    this.refreshTimer(by);
     this.persist();
   }
 
@@ -439,28 +443,68 @@ export class HostRoom {
     return g.prompts[0]?.player ?? g.turnOrder[g.currentPlayerIndex] ?? null;
   }
 
-  private refreshTimer(): void {
+  /**
+   * Re-arm the turn timer after any change. The current player gets PRE_ROLL_SECONDS to roll,
+   * then `turnTimerSeconds` for the rest of the turn; each of their actions adds
+   * ACTION_BONUS_SECONDS, never past the full turn length. While another player answers a
+   * prompt (e.g. discarding on a 7) the turn clock pauses and that player gets their own
+   * `turnTimerSeconds` countdown. `actedBy` is the player whose command just applied.
+   */
+  private refreshTimer(actedBy?: string): void {
     const secs = this.lobby.settings.turnTimerSeconds;
     const g = this.game;
     const player = g ? this.actingPlayer(g) : null;
     if (!g || secs <= 0 || !player) {
-      if (this.timer.deadline !== null) {
-        this.timer = { key: '', deadline: null, player: null };
-        this.broadcast({ t: 'timer', deadline: null, player: null });
-      }
-      this.clearTimeoutHandle();
+      this.turnClock = null;
+      this.promptClock = null;
+      this.setTimer({ deadline: null, player: null });
       return;
     }
-    const key = `${g.turn}|${g.currentPlayerIndex}|${g.phase}|${player}|${g.prompts[0]?.id ?? ''}`;
-    if (key === this.timer.key) return;
-    const deadline = this.now() + secs * 1000;
-    this.timer = { key, deadline, player };
-    this.broadcast({ t: 'timer', deadline, player });
+    const now = this.now();
+    const current = g.turnOrder[g.currentPlayerIndex] ?? null;
+    const stage: TimerStage = g.phase === 'preRoll' ? 'roll' : 'turn';
+    const total = stage === 'roll' ? PRE_ROLL_SECONDS : secs;
+    const key = `${g.turn}|${g.currentPlayerIndex}|${g.phase}`;
+    let clock = this.turnClock;
+    if (!clock || clock.key !== key) {
+      clock = this.turnClock = { key, stage, total, deadline: now + total * 1000, pausedRemaining: null };
+    } else if (actedBy !== undefined && actedBy === current && player === current && clock.pausedRemaining === null
+      && clock.deadline > now) {
+      clock.deadline = Math.min(clock.deadline + ACTION_BONUS_SECONDS * 1000, now + clock.total * 1000);
+    }
+
+    if (player !== current) {
+      // Someone else must answer first: pause the turn clock and time their answer.
+      if (clock.pausedRemaining === null) clock.pausedRemaining = Math.max(0, clock.deadline - now);
+      const promptKey = `${key}|${g.prompts[0]?.id ?? ''}|${player}`;
+      if (!this.promptClock || this.promptClock.key !== promptKey) {
+        this.promptClock = { key: promptKey, deadline: now + secs * 1000 };
+      }
+      this.setTimer({ deadline: this.promptClock.deadline, player, stage: 'turn', total: secs });
+      return;
+    }
+    this.promptClock = null;
+    if (clock.pausedRemaining !== null) {
+      clock.deadline = now + clock.pausedRemaining;
+      clock.pausedRemaining = null;
+    }
+    this.setTimer({ deadline: clock.deadline, player, stage: clock.stage, total: clock.total });
+  }
+
+  /** Broadcast and schedule `next` if it differs from what is armed now. */
+  private setTimer(next: TimerInfo): void {
+    const t = this.timer;
+    if (t.deadline === next.deadline && t.player === next.player && t.stage === next.stage && t.total === next.total) return;
+    this.timer = next;
+    this.broadcast({ t: 'timer', ...next });
     this.clearTimeoutHandle();
+    if (next.deadline === null || next.player === null) return;
+    const armed = next;
+    const player = next.player;
     this.timeoutHandle = setTimeout(() => {
       this.timeoutHandle = null;
-      if (this.timer.key === key) this.onTurnTimeout?.(this, player);
-    }, secs * 1000);
+      if (this.timer === armed) this.onTurnTimeout?.(this, player);
+    }, Math.max(0, next.deadline - this.now()));
   }
 
   private clearTimeoutHandle(): void {
